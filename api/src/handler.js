@@ -246,13 +246,27 @@ const validateLogin = (body) => {
   return { identifier, password };
 };
 
+const avatarIndexForRow = (row) => {
+  const stored = String(row?.avatar_url || "").match(/^pig:(\d{1,2})$/);
+  if (stored && Number(stored[1]) >= 0 && Number(stored[1]) < 64) return Number(stored[1]);
+  let hash = 2166136261;
+  for (const character of String(row?.id || row?.email || "recetitas")) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0) % 64;
+};
+
+const publicAvatarUrl = (value) => /^https:\/\//i.test(String(value || "")) ? value : null;
+
 const userDto = (row, { includeEmail = true } = {}) => ({
   id: row.id,
   ...(includeEmail ? { email: row.email } : {}),
   handle: row.handle,
   displayName: row.display_name,
   bio: row.bio || "",
-  avatarUrl: row.avatar_url || null,
+  avatarUrl: publicAvatarUrl(row.avatar_url),
+  avatarIndex: avatarIndexForRow(row),
 });
 
 const recipeDto = (row) => ({
@@ -274,7 +288,8 @@ const recipeDto = (row) => ({
     id: row.author_id,
     handle: row.handle,
     displayName: row.display_name,
-    avatarUrl: row.avatar_url || null,
+    avatarUrl: publicAvatarUrl(row.avatar_url),
+    avatarIndex: avatarIndexForRow({ id: row.author_id, avatar_url: row.avatar_url }),
     followed: Boolean(row.author_followed),
   },
 });
@@ -549,9 +564,10 @@ export async function handleApiRequest(request, env) {
       const userId = createId("usr");
       const createdAt = now();
       const password = await hashPassword(registration.password);
+      const avatarValue = `pig:${Number.parseInt(randomHex(1), 16) % 64}`;
       await env.DB.batch([
         env.DB.prepare("INSERT INTO users (id, email, handle, display_name, bio, avatar_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-          .bind(userId, registration.email, registration.handle, registration.displayName, "", null, createdAt),
+          .bind(userId, registration.email, registration.handle, registration.displayName, "", avatarValue, createdAt),
         env.DB.prepare("INSERT INTO credentials (user_id, password_hash, password_salt, password_iterations, updated_at) VALUES (?, ?, ?, ?, ?)")
           .bind(userId, password.hash, password.salt, password.iterations, createdAt),
       ]);
@@ -650,9 +666,14 @@ export async function handleApiRequest(request, env) {
       const displayName = cleanText(body.displayName, 60);
       const handle = cleanText(body.handle, 24).toLowerCase();
       const bio = cleanText(body.bio, 180);
+      const requestedAvatarIndex = Number(body.avatarIndex);
+      const hasAvatarIndex = body.avatarIndex !== undefined && body.avatarIndex !== null;
 
       if (displayName.length < 2 || !/^[a-z0-9_]{3,24}$/.test(handle)) {
         return error(422, "INVALID_PROFILE", "Revisá tu nombre y usuario.");
+      }
+      if (hasAvatarIndex && (!Number.isInteger(requestedAvatarIndex) || requestedAvatarIndex < 0 || requestedAvatarIndex > 63)) {
+        return error(422, "INVALID_AVATAR", "Elegí un avatar válido.");
       }
 
       const conflict = await env.DB.prepare("SELECT id FROM users WHERE handle = ? AND id <> ?")
@@ -660,8 +681,9 @@ export async function handleApiRequest(request, env) {
         .first();
       if (conflict) return error(409, "HANDLE_TAKEN", "Ese usuario ya está ocupado.");
 
-      await env.DB.prepare("UPDATE users SET display_name = ?, handle = ?, bio = ? WHERE id = ?")
-        .bind(displayName, handle, bio, auth.user.id)
+      const avatarValue = `pig:${hasAvatarIndex ? requestedAvatarIndex : avatarIndexForRow(auth.user)}`;
+      await env.DB.prepare("UPDATE users SET display_name = ?, handle = ?, bio = ?, avatar_url = ? WHERE id = ?")
+        .bind(displayName, handle, bio, avatarValue, auth.user.id)
         .run();
       const updated = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(auth.user.id).first();
       return json({ user: userDto(updated) });
@@ -732,7 +754,8 @@ export async function handleApiRequest(request, env) {
             id: row.author_id,
             handle: row.handle,
             displayName: row.display_name,
-            avatarUrl: row.avatar_url || null,
+            avatarUrl: publicAvatarUrl(row.avatar_url),
+            avatarIndex: avatarIndexForRow({ id: row.author_id, avatar_url: row.avatar_url }),
           },
         })) });
       }
@@ -850,6 +873,7 @@ export const __test = {
   cleanText,
   cleanLines,
   hashPassword,
+  avatarIndexForRow,
   hasValidOrigin,
   parseCookies,
   sessionCookie,

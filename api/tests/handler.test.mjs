@@ -107,3 +107,11 @@ test("only accepts recipe images from the configured media service", () => {
   }, "https://media-recetitas.hex-rp.com");
   assert.match(recipe.error, /imagen.*no es válida/i);
 });
+
+test("keeps pig avatar assignment stable and within the 64-image atlas", () => {
+  assert.equal(__test.avatarIndexForRow({ id: "user-1", avatar_url: "pig:63" }), 63);
+  const first = __test.avatarIndexForRow({ id: "legacy-user", avatar_url: null });
+  const second = __test.avatarIndexForRow({ id: "legacy-user", avatar_url: null });
+  assert.equal(first, second);
+  assert.ok(first >= 0 && first < 64);
+});

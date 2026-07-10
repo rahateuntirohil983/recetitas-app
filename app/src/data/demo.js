@@ -5,6 +5,7 @@ export const demoUser = {
   displayName: "Marti",
   bio: "Meriendas simples para compartir.",
   avatarUrl: null,
+  avatarIndex: 27,
 };
 
 export const demoRecipes = [];

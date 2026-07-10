@@ -1,6 +1,7 @@
 <script setup>
 import { ref, watch } from "vue";
 import { PhArrowUp, PhX } from "@phosphor-icons/vue";
+import PigAvatar from "./PigAvatar.vue";
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -22,7 +23,6 @@ const submit = () => {
   body.value = "";
 };
 
-const initial = (name) => String(name || "R").slice(0, 1).toUpperCase();
 </script>
 
 <template>
@@ -42,7 +42,7 @@ const initial = (name) => String(name || "R").slice(0, 1).toUpperCase();
 
         <div class="flex-1 space-y-5 overflow-y-auto px-5 py-6 sm:px-7">
           <article v-for="comment in comments" :key="comment.id" class="flex gap-3">
-            <span class="grid size-10 shrink-0 place-items-center rounded-full bg-blush font-display text-lg font-bold" aria-hidden="true">{{ initial(comment.author.displayName) }}</span>
+            <PigAvatar :index="comment.author.avatarIndex" :size="40" :label="`Avatar de ${comment.author.displayName}`" class="ring-2 ring-charcoal/10" />
             <div class="min-w-0 flex-1 bg-cream px-4 py-3">
               <p class="text-sm font-semibold text-charcoal">{{ comment.author.displayName }} <span class="font-normal text-charcoal/50">@{{ comment.author.handle }}</span></p>
               <p class="mt-1 leading-relaxed text-charcoal/75">{{ comment.body }}</p>

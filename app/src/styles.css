@@ -158,6 +158,13 @@ select:focus-visible {
   clip-path: polygon(0 2%, 8% 0, 18% 1.5%, 29% 0, 40% 1.3%, 52% 0, 63% 1.5%, 75% 0, 86% 1.2%, 100% 0, 100% 98%, 91% 100%, 80% 98.6%, 68% 100%, 55% 98.5%, 42% 100%, 30% 98.7%, 17% 100%, 7% 98.5%, 0 100%);
 }
 
+.profile-cover-grid {
+  background-image:
+    linear-gradient(rgba(249, 245, 243, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(249, 245, 243, 0.055) 1px, transparent 1px);
+  background-size: 30px 30px;
+}
+
 .field-label {
   display: grid;
   gap: 0.5rem;

@@ -16,6 +16,7 @@ import ConnectionsPanel from "./components/ConnectionsPanel.vue";
 import EditProfileModal from "./components/EditProfileModal.vue";
 import LoginPanel from "./components/LoginPanel.vue";
 import ProfileView from "./components/ProfileView.vue";
+import PigAvatar from "./components/PigAvatar.vue";
 import RecipeCard from "./components/RecipeCard.vue";
 import { api } from "./lib/api.js";
 
@@ -336,8 +337,10 @@ onMounted(async () => {
 
       <div class="mt-auto border-t border-porcelain/18 pt-5">
         <template v-if="session.authenticated">
-          <p class="font-semibold">{{ session.user.displayName }}</p>
-          <p class="text-sm text-porcelain/55">@{{ session.user.handle }}</p>
+          <button type="button" class="focus-ring flex w-full items-center gap-3 text-left" @click="openOwnProfile">
+            <PigAvatar :index="session.user.avatarIndex" :size="44" :label="`Avatar de ${session.user.displayName}`" class="ring-2 ring-porcelain/30" />
+            <span class="min-w-0"><strong class="block truncate">{{ session.user.displayName }}</strong><span class="block truncate text-sm text-porcelain/55">@{{ session.user.handle }}</span></span>
+          </button>
           <button type="button" class="mt-4 inline-flex items-center gap-2 text-sm text-porcelain/65 hover:text-blush" @click="logout"><PhSignOut :size="18" /> Salir</button>
         </template>
         <button v-else type="button" class="text-left text-sm font-semibold text-blush hover:text-olive" @click="loginOpen = true">Entrar a la comunidad</button>
@@ -367,7 +370,8 @@ onMounted(async () => {
           </header>
 
           <button type="button" class="composer-prompt focus-ring mb-7 flex w-full items-center gap-4 border-2 border-charcoal bg-blush px-5 py-4 text-left hover:bg-olive sm:px-6" @click="startPublishing">
-            <span class="grid size-12 shrink-0 place-items-center rounded-full bg-charcoal font-display text-xl font-bold text-porcelain">{{ session.user?.displayName?.slice(0, 1) || '+' }}</span>
+            <PigAvatar v-if="session.user" :index="session.user.avatarIndex" :size="48" :label="`Avatar de ${session.user.displayName}`" class="ring-2 ring-charcoal" />
+            <span v-else class="grid size-12 shrink-0 place-items-center rounded-full bg-charcoal font-display text-xl font-bold text-porcelain">+</span>
             <span class="flex-1">
               <strong class="block font-display text-xl text-charcoal">¿Qué cocinaste?</strong>
               <span class="text-sm text-charcoal/65">Compartí una receta, un recuerdo o ese truco que nunca falla.</span>

@@ -8,6 +8,7 @@ import {
   PhTrash,
   PhUsers,
 } from "@phosphor-icons/vue";
+import PigAvatar from "./PigAvatar.vue";
 
 defineProps({
   recipe: { type: Object, required: true },
@@ -17,16 +18,13 @@ defineProps({
 });
 defineEmits(["like", "save", "comments", "profile", "follow", "delete"]);
 
-const initials = (name) => String(name || "R").trim().slice(0, 1).toUpperCase();
 </script>
 
 <template>
   <article class="recipe-card overflow-hidden border-2 border-charcoal bg-porcelain">
     <header class="flex items-center justify-between gap-4 px-5 py-4 sm:px-6">
       <button type="button" class="focus-ring flex min-w-0 items-center gap-3 text-left" @click="$emit('profile', recipe.author.handle)">
-        <span class="grid size-11 shrink-0 place-items-center rounded-full bg-blush font-display text-xl font-bold text-charcoal" aria-hidden="true">
-          {{ initials(recipe.author.displayName) }}
-        </span>
+        <PigAvatar :index="recipe.author.avatarIndex" :size="44" :label="`Avatar de ${recipe.author.displayName}`" class="ring-2 ring-charcoal/15" />
         <div class="min-w-0">
           <p class="truncate font-semibold text-charcoal">{{ recipe.author.displayName }}</p>
           <p class="truncate text-sm text-charcoal/55">@{{ recipe.author.handle }}</p>

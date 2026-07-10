@@ -56,6 +56,7 @@ export const api = {
       email: payload.email,
       handle: payload.handle.toLowerCase(),
       displayName: payload.displayName,
+      avatarIndex: Math.floor(Math.random() * 64),
     };
     demoAuthenticated = true;
     await pause(260);

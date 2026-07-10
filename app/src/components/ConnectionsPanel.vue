@@ -1,5 +1,6 @@
 <script setup>
 import { PhX } from "@phosphor-icons/vue";
+import PigAvatar from "./PigAvatar.vue";
 
 defineProps({
   open: { type: Boolean, default: false },
@@ -8,7 +9,6 @@ defineProps({
   loading: { type: Boolean, default: false },
 });
 defineEmits(["close", "profile"]);
-const initials = (name) => String(name || "R").trim().slice(0, 1).toUpperCase();
 </script>
 
 <template>
@@ -22,7 +22,7 @@ const initials = (name) => String(name || "R").trim().slice(0, 1).toUpperCase();
         <p v-else-if="!people.length" class="mt-7 bg-cream px-5 py-8 text-center">Todavía no hay personas para mostrar.</p>
         <div v-else class="mt-7 grid max-h-[55vh] gap-2 overflow-y-auto">
           <button v-for="person in people" :key="person.id" type="button" class="focus-ring flex items-center gap-3 border border-charcoal/20 px-4 py-3 text-left hover:bg-blush" @click="$emit('profile', person.handle)">
-            <span class="grid size-11 shrink-0 place-items-center rounded-full bg-olive font-display text-xl font-bold">{{ initials(person.displayName) }}</span>
+            <PigAvatar :index="person.avatarIndex" :size="44" :label="`Avatar de ${person.displayName}`" class="ring-2 ring-charcoal/10" />
             <span class="min-w-0"><strong class="block truncate">{{ person.displayName }}</strong><span class="block truncate text-sm text-charcoal/55">@{{ person.handle }}</span></span>
           </button>
         </div>

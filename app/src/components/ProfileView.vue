@@ -1,8 +1,9 @@
 <script setup>
 import { PhArrowLeft, PhPencilSimple, PhUserPlus } from "@phosphor-icons/vue";
+import PigAvatar from "./PigAvatar.vue";
 import RecipeCard from "./RecipeCard.vue";
 
-const props = defineProps({
+defineProps({
   profile: { type: Object, default: null },
   recipes: { type: Array, default: () => [] },
   viewerId: { type: String, default: "" },
@@ -11,11 +12,10 @@ const props = defineProps({
 });
 
 defineEmits(["back", "edit", "follow", "connections", "like", "save", "comments", "profile", "delete"]);
-const initials = (name) => String(name || "R").trim().slice(0, 1).toUpperCase();
 </script>
 
 <template>
-  <section class="mx-auto w-full max-w-[900px] px-4 pb-28 pt-7 sm:px-7 lg:pb-16 lg:pt-10">
+  <section class="mx-auto w-full max-w-[1040px] px-4 pb-28 pt-7 sm:px-7 lg:pb-16 lg:pt-10">
     <button type="button" class="focus-ring inline-flex min-h-11 items-center gap-2 font-semibold text-charcoal/65 hover:text-charcoal" @click="$emit('back')">
       <PhArrowLeft :size="21" weight="bold" aria-hidden="true" /> Volver a la mesa
     </button>
@@ -23,39 +23,44 @@ const initials = (name) => String(name || "R").trim().slice(0, 1).toUpperCase();
     <div v-if="loading" class="mt-6 border-2 border-charcoal bg-cream px-6 py-20 text-center font-display text-2xl text-charcoal/60" role="status">Buscando el recetario…</div>
 
     <template v-else-if="profile">
-      <header class="profile-hero mt-5 overflow-hidden border-2 border-charcoal bg-blush">
-        <div class="h-24 bg-olive sm:h-32" aria-hidden="true" />
-        <div class="px-5 pb-7 sm:px-8 sm:pb-9">
-          <div class="-mt-12 flex flex-col gap-5 sm:-mt-14 sm:flex-row sm:items-end sm:justify-between">
-            <div class="flex min-w-0 items-end gap-4">
-              <span class="grid size-24 shrink-0 place-items-center rounded-full border-4 border-porcelain bg-charcoal font-display text-4xl font-bold text-porcelain sm:size-28">{{ initials(profile.displayName) }}</span>
-              <div class="min-w-0 pb-1">
-                <h1 class="truncate font-display text-[clamp(2.7rem,7vw,4.8rem)] font-bold leading-none tracking-[-0.055em]">{{ profile.displayName }}</h1>
-                <p class="mt-1 font-semibold text-charcoal/60">@{{ profile.handle }}</p>
-              </div>
-            </div>
+      <header class="profile-hero mt-5 overflow-hidden border-2 border-charcoal bg-porcelain shadow-[10px_10px_0_#242421]">
+        <div class="profile-cover-grid relative h-32 overflow-hidden bg-charcoal sm:h-40" aria-hidden="true">
+          <div class="absolute -right-8 -top-16 size-52 rounded-full bg-blush" />
+          <div class="absolute -bottom-20 left-[42%] size-44 rounded-full bg-olive" />
+          <p class="absolute bottom-5 left-5 font-display text-lg font-bold text-porcelain/85 sm:left-8">La cocina de @{{ profile.handle }}</p>
+        </div>
 
-            <button v-if="profile.isOwnProfile" type="button" class="focus-ring inline-flex min-h-12 items-center justify-center gap-2 border-2 border-charcoal bg-porcelain px-5 font-semibold hover:bg-cream" @click="$emit('edit')">
+        <div class="relative px-5 pb-6 sm:px-8 sm:pb-8">
+          <div class="-mt-14 flex flex-col gap-4 sm:-mt-16 sm:flex-row sm:items-end sm:justify-between">
+            <PigAvatar :index="profile.avatarIndex" :size="128" :label="`Avatar de ${profile.displayName}`" class="border-4 border-porcelain shadow-[0_0_0_2px_#242421]" />
+            <button v-if="profile.isOwnProfile" type="button" class="focus-ring inline-flex min-h-12 items-center justify-center gap-2 border-2 border-charcoal bg-porcelain px-5 font-semibold transition hover:bg-blush" @click="$emit('edit')">
               <PhPencilSimple :size="20" aria-hidden="true" /> Editar perfil
             </button>
-            <button v-else type="button" class="focus-ring inline-flex min-h-12 items-center justify-center gap-2 border-2 border-charcoal px-5 font-semibold" :class="profile.followed ? 'bg-olive' : 'bg-charcoal text-porcelain'" :disabled="busy" @click="$emit('follow', profile)">
+            <button v-else type="button" class="focus-ring inline-flex min-h-12 items-center justify-center gap-2 border-2 border-charcoal px-5 font-semibold transition" :class="profile.followed ? 'bg-olive' : 'bg-charcoal text-porcelain'" :disabled="busy" @click="$emit('follow', profile)">
               <PhUserPlus :size="20" :weight="profile.followed ? 'fill' : 'regular'" aria-hidden="true" /> {{ profile.followed ? "Siguiendo" : "Seguir" }}
             </button>
           </div>
 
-          <p class="mt-6 max-w-[620px] text-base leading-relaxed text-charcoal/75">{{ profile.bio || "Todavía no escribió su historia de cocina." }}</p>
+          <div class="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_310px] lg:items-end">
+            <div class="min-w-0">
+              <p class="text-xs font-bold uppercase tracking-[0.18em] text-olive-dark">Recetario personal</p>
+              <h1 class="mt-1 break-words font-display text-[clamp(2.7rem,8vw,4.5rem)] font-bold leading-[0.94] tracking-[-0.055em] text-charcoal">{{ profile.displayName }}</h1>
+              <p class="mt-2 font-semibold text-charcoal/55">@{{ profile.handle }}</p>
+              <p class="mt-5 max-w-[620px] border-l-4 border-blush pl-4 text-base leading-relaxed text-charcoal/75">{{ profile.bio || "Todavía no escribió su historia de cocina." }}</p>
+            </div>
 
-          <div class="mt-6 flex flex-wrap gap-x-7 gap-y-3 border-t border-charcoal/20 pt-5 text-sm">
-            <p><strong class="font-display text-2xl">{{ profile.recipeCount }}</strong> recetas</p>
-            <button type="button" class="focus-ring hover:underline" @click="$emit('connections', 'followers')"><strong class="font-display text-2xl">{{ profile.followerCount }}</strong> seguidores</button>
-            <button type="button" class="focus-ring hover:underline" @click="$emit('connections', 'following')"><strong class="font-display text-2xl">{{ profile.followingCount }}</strong> siguiendo</button>
+            <div class="grid grid-cols-3 border-2 border-charcoal bg-cream text-center">
+              <div class="px-2 py-4"><strong class="block font-display text-3xl leading-none">{{ profile.recipeCount }}</strong><span class="mt-1 block text-xs font-semibold text-charcoal/60">recetas</span></div>
+              <button type="button" class="focus-ring border-x-2 border-charcoal px-2 py-4 transition hover:bg-blush" @click="$emit('connections', 'followers')"><strong class="block font-display text-3xl leading-none">{{ profile.followerCount }}</strong><span class="mt-1 block text-xs font-semibold text-charcoal/60">seguidores</span></button>
+              <button type="button" class="focus-ring px-2 py-4 transition hover:bg-olive" @click="$emit('connections', 'following')"><strong class="block font-display text-3xl leading-none">{{ profile.followingCount }}</strong><span class="mt-1 block text-xs font-semibold text-charcoal/60">siguiendo</span></button>
+            </div>
           </div>
         </div>
       </header>
 
       <div class="mb-6 mt-10 flex items-end justify-between gap-4">
         <div>
-          <p class="text-xs font-bold uppercase tracking-[0.17em] text-olive-dark">Su cocina</p>
+          <p class="text-xs font-bold uppercase tracking-[0.17em] text-olive-dark">{{ profile.isOwnProfile ? "Tu cocina" : "Su cocina" }}</p>
           <h2 class="font-display text-4xl font-bold tracking-[-0.045em]">Recetas publicadas.</h2>
         </div>
       </div>
