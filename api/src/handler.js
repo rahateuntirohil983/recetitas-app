@@ -56,7 +56,7 @@ const SCHEMA_STATEMENTS = [
 ];
 
 let schemaReady;
-let demoDataReady;
+let demoCleanupReady;
 
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
@@ -183,88 +183,24 @@ const ensureSchema = async (db) => {
   await schemaReady;
 };
 
-const seedDemoData = async (db) => {
-  if (!demoDataReady) {
-    demoDataReady = (async () => {
-      const countRow = await db.prepare("SELECT COUNT(*) AS count FROM recipes").first();
-      if (Number(countRow?.count || 0) > 0) return;
+const cleanupDemoData = async (db) => {
+  if (!demoCleanupReady) {
+    const statements = [
+      db.prepare("DELETE FROM comments WHERE recipe_id LIKE 'recipe_demo_%' OR author_id LIKE 'user_demo_%'"),
+      db.prepare("DELETE FROM likes WHERE recipe_id LIKE 'recipe_demo_%' OR user_id LIKE 'user_demo_%'"),
+      db.prepare("DELETE FROM bookmarks WHERE recipe_id LIKE 'recipe_demo_%' OR user_id LIKE 'user_demo_%'"),
+      db.prepare("DELETE FROM follows WHERE follower_id LIKE 'user_demo_%' OR followed_id LIKE 'user_demo_%'"),
+      db.prepare("DELETE FROM recipes WHERE id LIKE 'recipe_demo_%' OR author_id LIKE 'user_demo_%'"),
+      db.prepare("DELETE FROM users WHERE id LIKE 'user_demo_%' OR email LIKE '%@demo.recetitas.app'"),
+    ];
 
-      const createdAt = now();
-      const recipes = [
-        {
-          id: "recipe_demo_gnocchi",
-          authorId: "user_demo_cami",
-          title: "Ñoquis de calabaza, sin vueltas",
-          summary: "Doraditos, suaves y con salvia. Una receta de familia para repetir los domingos.",
-          imageKey: "pumpkin",
-          cookMinutes: 42,
-          servings: 4,
-          ingredients: ["Calabaza asada", "Harina", "Parmesano", "Salvia", "Manteca"],
-          steps: ["Asá y pisá la calabaza.", "Integrá la harina sin amasar de más.", "Cortá, herví y dorá con salvia."],
-        },
-        {
-          id: "recipe_demo_pasta",
-          authorId: "user_demo_lola",
-          title: "Pasta fresca para una mesa larga",
-          summary: "Una masa simple, muchas manos y salsa de tomates bien maduros.",
-          imageKey: "gnocchi",
-          cookMinutes: 55,
-          servings: 6,
-          ingredients: ["Harina 0000", "Huevos", "Aceite de oliva", "Tomates", "Ajo"],
-          steps: ["Formá la masa y dejala descansar.", "Estirá y cortá cintas anchas.", "Cociná y terminá en la salsa."],
-        },
-        {
-          id: "recipe_demo_torta",
-          authorId: "user_demo_marti",
-          title: "Torta de limón para la merienda",
-          summary: "Húmeda, ácida y lista con ingredientes que siempre están cerca.",
-          imageKey: "baking",
-          cookMinutes: 48,
-          servings: 8,
-          ingredients: ["Harina", "Huevos", "Limones", "Azúcar", "Yogur"],
-          steps: ["Batí huevos y azúcar.", "Sumá los secos y el yogur.", "Horneá y terminá con glasé de limón."],
-        },
-      ];
-
-      const statements = [
-        db.prepare("INSERT OR IGNORE INTO users (id, email, handle, display_name, bio, avatar_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-          .bind("user_demo_cami", "cami@demo.recetitas.app", "cami", "Cami", "Recetas de familia y mucha salvia.", null, createdAt),
-        db.prepare("INSERT OR IGNORE INTO users (id, email, handle, display_name, bio, avatar_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-          .bind("user_demo_lola", "lola@demo.recetitas.app", "lolacocina", "Lola", "Pasta, sobremesas y mercados de barrio.", null, createdAt),
-        db.prepare("INSERT OR IGNORE INTO users (id, email, handle, display_name, bio, avatar_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-          .bind("user_demo_marti", "marti@demo.recetitas.app", "marti", "Marti", "Meriendas simples para compartir.", null, createdAt),
-      ];
-
-      for (const recipe of recipes) {
-        statements.push(
-          db.prepare(`INSERT OR IGNORE INTO recipes (
-            id, author_id, title, summary, image_key, image_url, cook_minutes,
-            servings, ingredients_json, steps_json, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-            .bind(
-              recipe.id,
-              recipe.authorId,
-              recipe.title,
-              recipe.summary,
-              recipe.imageKey,
-              null,
-              recipe.cookMinutes,
-              recipe.servings,
-              JSON.stringify(recipe.ingredients),
-              JSON.stringify(recipe.steps),
-              createdAt,
-            ),
-        );
-      }
-
-      await db.batch(statements);
-    })().catch((cause) => {
-      demoDataReady = null;
+    demoCleanupReady = db.batch(statements).catch((cause) => {
+      demoCleanupReady = null;
       throw cause;
     });
   }
 
-  await demoDataReady;
+  await demoCleanupReady;
 };
 
 const uniqueHandle = async (db, email) => {
@@ -405,7 +341,7 @@ export async function handleApiRequest(request, env) {
 
   try {
     await ensureSchema(env.DB);
-    await seedDemoData(env.DB);
+    await cleanupDemoData(env.DB);
 
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, "") || "/api";

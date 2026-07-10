@@ -1,73 +1,12 @@
 export const demoUser = {
-  id: "user_demo_marti",
-  email: "marti@demo.recetitas.app",
+  id: "user_local_dev",
+  email: "marti@local.recetitas.app",
   handle: "marti",
   displayName: "Marti",
   bio: "Meriendas simples para compartir.",
   avatarUrl: null,
 };
 
-export const demoRecipes = [
-  {
-    id: "recipe_demo_gnocchi",
-    title: "Ñoquis de calabaza, sin vueltas",
-    summary: "Doraditos, suaves y con salvia. Una receta de familia para repetir los domingos.",
-    imageKey: "pumpkin",
-    imageUrl: null,
-    cookMinutes: 42,
-    servings: 4,
-    ingredients: ["Calabaza asada", "Harina", "Parmesano", "Salvia", "Manteca"],
-    steps: ["Asá y pisá la calabaza.", "Integrá la harina sin amasar de más.", "Cortá, herví y dorá con salvia."],
-    createdAt: new Date().toISOString(),
-    likeCount: 128,
-    commentCount: 14,
-    liked: false,
-    saved: true,
-    author: { id: "user_demo_cami", handle: "cami", displayName: "Cami", avatarUrl: null },
-  },
-  {
-    id: "recipe_demo_pasta",
-    title: "Pasta fresca para una mesa larga",
-    summary: "Una masa simple, muchas manos y salsa de tomates bien maduros.",
-    imageKey: "gnocchi",
-    imageUrl: null,
-    cookMinutes: 55,
-    servings: 6,
-    ingredients: ["Harina 0000", "Huevos", "Aceite de oliva", "Tomates", "Ajo"],
-    steps: ["Formá la masa y dejala descansar.", "Estirá y cortá cintas anchas.", "Cociná y terminá en la salsa."],
-    createdAt: new Date(Date.now() - 3_600_000).toISOString(),
-    likeCount: 89,
-    commentCount: 9,
-    liked: true,
-    saved: false,
-    author: { id: "user_demo_lola", handle: "lolacocina", displayName: "Lola", avatarUrl: null },
-  },
-  {
-    id: "recipe_demo_torta",
-    title: "Torta de limón para la merienda",
-    summary: "Húmeda, ácida y lista con ingredientes que siempre están cerca.",
-    imageKey: "baking",
-    imageUrl: null,
-    cookMinutes: 48,
-    servings: 8,
-    ingredients: ["Harina", "Huevos", "Limones", "Azúcar", "Yogur"],
-    steps: ["Batí huevos y azúcar.", "Sumá los secos y el yogur.", "Horneá y terminá con glasé de limón."],
-    createdAt: new Date(Date.now() - 7_200_000).toISOString(),
-    likeCount: 64,
-    commentCount: 6,
-    liked: false,
-    saved: false,
-    author: demoUser,
-  },
-];
+export const demoRecipes = [];
 
-export const demoComments = {
-  recipe_demo_gnocchi: [
-    {
-      id: "comment_demo_1",
-      body: "Los hice anoche y quedaron increíbles. La salvia cambia todo.",
-      createdAt: new Date().toISOString(),
-      author: { id: "user_demo_lola", handle: "lolacocina", displayName: "Lola", avatarUrl: null },
-    },
-  ],
-};
+export const demoComments = {};

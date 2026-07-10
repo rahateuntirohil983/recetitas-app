@@ -1,14 +1,6 @@
 <script setup>
-import { ref } from "vue";
-import { PhCheckCircle, PhPlant } from "@phosphor-icons/vue";
+import { PhArrowRight, PhPlant } from "@phosphor-icons/vue";
 import bakingPrep from "../assets/images/baking-prep-signup.webp";
-
-const email = ref("");
-const submitted = ref(false);
-
-const submit = () => {
-  submitted.value = true;
-};
 </script>
 
 <template>
@@ -29,34 +21,28 @@ const submit = () => {
         Creá tu cuenta gratis y empezá a descubrir, guardar y compartir recetas.
       </p>
 
-      <div v-if="submitted" class="mx-auto mt-8 flex max-w-[560px] items-center justify-center gap-3 bg-porcelain px-6 py-5 text-left text-charcoal" role="status">
-        <PhCheckCircle :size="30" weight="fill" class="shrink-0 text-olive" aria-hidden="true" />
-        <p><strong>¡Listo!</strong> Te avisaremos a {{ email }} cuando abramos las puertas.</p>
+      <div class="mx-auto mt-8 flex max-w-[640px] flex-col justify-center gap-3 sm:flex-row">
+        <a
+          href="/signin-with-chatgpt?return_to=/app/"
+          class="focus-ring inline-flex min-h-14 items-center justify-center gap-3 bg-charcoal px-8 text-base font-semibold text-porcelain transition hover:bg-olive hover:text-charcoal"
+        >
+          Crear mi cuenta <PhArrowRight :size="19" weight="bold" aria-hidden="true" />
+        </a>
+        <a
+          href="/app/"
+          class="focus-ring inline-flex min-h-14 items-center justify-center border-2 border-charcoal px-8 text-base font-semibold text-charcoal transition hover:bg-porcelain"
+        >
+          Ver la comunidad
+        </a>
       </div>
 
-      <form v-else class="mx-auto mt-8 flex max-w-[640px] flex-col gap-3 sm:flex-row" @submit.prevent="submit">
-        <label for="email" class="sr-only">Tu correo electrónico</label>
-        <input
-          id="email"
-          v-model="email"
-          type="email"
-          required
-          autocomplete="email"
-          placeholder="Tu correo electrónico"
-          class="focus-ring min-h-14 flex-1 border-2 border-transparent bg-porcelain px-5 text-base text-charcoal placeholder:text-charcoal/50 focus:border-charcoal focus:outline-none"
-        />
-        <button type="submit" class="focus-ring min-h-14 bg-charcoal px-8 text-base font-semibold text-porcelain transition hover:bg-olive hover:text-charcoal">
-          Crear mi cuenta
-        </button>
-      </form>
-
-      <p v-if="!submitted" class="mx-auto mt-3 max-w-[520px] text-sm text-charcoal/70">
-        Sin spam. Solo te avisamos cuando abramos las puertas.
+      <p class="mx-auto mt-3 max-w-[520px] text-sm text-charcoal/70">
+        Gratis. Sin contraseñas nuevas: ingresás de forma segura con tu cuenta de ChatGPT.
       </p>
 
       <p class="mt-5 text-base text-charcoal">
         ¿Ya tenés cuenta?
-        <a href="mailto:hola@recetitas.app?subject=Quiero ingresar" class="font-semibold underline decoration-2 underline-offset-4 hover:text-porcelain">Ingresá</a>
+        <a href="/signin-with-chatgpt?return_to=/app/" class="font-semibold underline decoration-2 underline-offset-4 hover:text-porcelain">Ingresá</a>
       </p>
     </div>
   </section>

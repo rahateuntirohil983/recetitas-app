@@ -1,6 +1,7 @@
 <script setup>
 import { PhAsteriskSimple } from "@phosphor-icons/vue";
 import BrandMark from "./BrandMark.vue";
+import SessionNav from "./SessionNav.vue";
 import heroFood from "../assets/images/pumpkin-gnocchi-hero.webp";
 import makingGnocchi from "../assets/images/making-gnocchi-hands.webp";
 
@@ -9,6 +10,7 @@ defineEmits(["explore", "share"]);
 
 <template>
   <section id="top" class="relative isolate min-h-[910px] bg-black text-porcelain lg:min-h-[900px]">
+    <SessionNav />
     <div class="absolute inset-y-0 right-0 hidden w-[42%] bg-blush md:block" aria-hidden="true" />
     <div class="hero-green-plane absolute bottom-0 right-0 hidden h-[54%] w-[38%] bg-olive md:block" aria-hidden="true" />
 

@@ -15,3 +15,4 @@ When implementing from a selected generated mock, treat that image as the source
 - Social app: keep the signed-in Vue experience in `app/`, built under `/app/` and visually derived from the landing tokens.
 - API: keep same-origin Worker endpoints in `api/`; use D1 through the logical `DB` binding for durable profiles, recipes, likes, bookmarks, comments, and follows.
 - Authentication: production identity comes from Sites-managed Sign in with ChatGPT headers; development-only demo identity must never be trusted on non-local hosts.
+- Content integrity: production and local previews start without synthetic recipes; every visible community recipe must be created by a signed-in user.
