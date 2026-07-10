@@ -1,0 +1,148 @@
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Yusei+Magic&display=swap");
+@import "tailwindcss";
+
+@theme {
+  --color-blush: #e3b4b9;
+  --color-cream: #f7ede8;
+  --color-porcelain: #f9f5f3;
+  --color-olive: #999e76;
+  --color-olive-dark: #6f7451;
+  --color-ink: #41403b;
+  --color-charcoal: #242421;
+  --font-sans: "DM Sans", sans-serif;
+  --font-display: "Yusei Magic", sans-serif;
+}
+
+:root {
+  color: #41403b;
+  background: #f9f5f3;
+  font-family: "DM Sans", sans-serif;
+  font-synthesis: weight;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  background: #f9f5f3;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: #f9f5f3;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  cursor: pointer;
+}
+
+.focus-ring:focus-visible,
+.footer-link:focus-visible,
+a:focus-visible {
+  outline: 3px solid #e3b4b9;
+  outline-offset: 4px;
+}
+
+.hero-title {
+  font-size: clamp(4rem, 7.1vw, 7.2rem);
+}
+
+.logo-window {
+  position: relative;
+  display: block;
+  width: 148px;
+  height: 180px;
+  overflow: hidden;
+  background: transparent;
+}
+
+.logo-window img {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 200%;
+  max-width: none;
+  height: auto;
+  transform: translate(-50%, -50%);
+  filter: grayscale(1) contrast(10);
+  mix-blend-mode: lighten;
+}
+
+.logo-window--compact {
+  width: 76px;
+  height: 94px;
+}
+
+.hero-green-plane {
+  clip-path: polygon(16% 0, 100% 12%, 100% 100%, 0 100%);
+}
+
+.hero-mobile-green {
+  clip-path: polygon(12% 0, 100% 14%, 100% 100%, 0 100%);
+}
+
+.hero-food-mask {
+  border-radius: 45% 45% 10% 44%;
+}
+
+.recipe-note {
+  clip-path: polygon(0 3%, 7% 1%, 15% 2%, 24% 0, 34% 2%, 44% 1%, 54% 3%, 63% 0, 72% 2%, 82% 1%, 91% 3%, 100% 1%, 98% 98%, 90% 97%, 80% 100%, 70% 98%, 60% 99%, 49% 97%, 39% 100%, 28% 98%, 18% 99%, 9% 97%, 1% 99%);
+  transform: rotate(-2.5deg);
+}
+
+.hands-mask {
+  clip-path: polygon(15% 0, 89% 5%, 100% 25%, 96% 82%, 78% 100%, 18% 95%, 0 78%, 4% 20%);
+}
+
+.join-section {
+  clip-path: polygon(0 5%, 12% 3%, 22% 4%, 34% 2%, 45% 4%, 56% 2%, 68% 4%, 79% 3%, 90% 4%, 100% 2%, 100% 100%, 0 100%);
+}
+
+.footer-link {
+  color: rgba(249, 245, 243, 0.86);
+  transition: color 160ms ease;
+}
+
+.footer-link:hover {
+  color: #e3b4b9;
+}
+
+@media (max-width: 1023px) {
+  .hero-title {
+    font-size: clamp(3.9rem, 7vw, 5.2rem);
+  }
+}
+
+@media (max-width: 767px) {
+  .hero-title {
+    font-size: clamp(3.75rem, 16vw, 5.3rem);
+  }
+
+  .join-section {
+    clip-path: polygon(0 2%, 20% 1%, 40% 2%, 61% 1%, 82% 2%, 100% 1%, 100% 100%, 0 100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
