@@ -18,4 +18,4 @@ When implementing from a selected generated mock, treat that image as the source
 - Content integrity: production and local previews start without synthetic recipes; every visible community recipe must be created by a signed-in user.
 - Profile navigation: public profiles use stable `/app/u/:handle` URLs; profile edits, follow relationships, connection lists, and owned-recipe deletion remain same-origin API operations.
 - Recipe media: browsers upload only through the authenticated same-origin API; the Worker forwards validated JPEG/PNG/WebP bytes to the VPS media service, while D1 stores only the resulting HTTPS URL.
-- Avatar system: use the generated 8×8 pig-chef atlas in `app/src/assets/pig-avatar-atlas.webp`; every user receives a stable index from 0–63 and may reroll it from profile editing.
+- Avatar system: keep the generated 8×8 pig-chef atlas as the source, slice it with `scripts/slice-avatar-atlas.py`, and serve the 64 individual WebP files from `app/public/avatars`; every user receives a stable index from 0–63 and may reroll it from profile editing.

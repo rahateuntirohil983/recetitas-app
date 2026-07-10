@@ -27,7 +27,7 @@ defineEmits(["back", "edit", "follow", "connections", "like", "save", "comments"
         <div class="profile-cover-grid relative h-32 overflow-hidden bg-charcoal sm:h-40" aria-hidden="true">
           <div class="absolute -right-8 -top-16 size-52 rounded-full bg-blush" />
           <div class="absolute -bottom-20 left-[42%] size-44 rounded-full bg-olive" />
-          <p class="absolute bottom-5 left-5 font-display text-lg font-bold text-porcelain/85 sm:left-8">La cocina de @{{ profile.handle }}</p>
+          <p class="absolute left-5 top-5 font-display text-lg font-bold text-porcelain/85 sm:left-8">La cocina de @{{ profile.handle }}</p>
         </div>
 
         <div class="relative px-5 pb-6 sm:px-8 sm:pb-8">

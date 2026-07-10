@@ -1,6 +1,5 @@
 <script setup>
 import { computed } from "vue";
-import avatarAtlas from "../assets/pig-avatar-atlas.webp";
 
 const props = defineProps({
   index: { type: Number, default: 0 },
@@ -8,20 +7,16 @@ const props = defineProps({
   label: { type: String, default: "Avatar de cerdito cocinero" },
 });
 
+const avatarIndex = computed(() => Math.abs(Number(props.index) || 0) % 64);
+const avatarSrc = computed(() => `${import.meta.env.BASE_URL}avatars/pig-${String(avatarIndex.value).padStart(2, "0")}.webp`);
 const avatarStyle = computed(() => {
-  const normalized = Math.abs(Number(props.index) || 0) % 64;
-  const column = normalized % 8;
-  const row = Math.floor(normalized / 8);
   return {
     width: `${props.size}px`,
     height: `${props.size}px`,
-    backgroundImage: `url(${avatarAtlas})`,
-    backgroundSize: "800% 800%",
-    backgroundPosition: `${(column / 7) * 100}% ${(row / 7) * 100}%`,
   };
 });
 </script>
 
 <template>
-  <span class="inline-block shrink-0 rounded-full bg-cream bg-no-repeat" :style="avatarStyle" role="img" :aria-label="label" />
+  <img :src="avatarSrc" :alt="label" class="inline-block shrink-0 rounded-full bg-cream object-cover" :style="avatarStyle" loading="lazy" decoding="async" />
 </template>
