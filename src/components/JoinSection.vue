@@ -1,6 +1,7 @@
 <script setup>
 import { PhArrowRight, PhPlant } from "@phosphor-icons/vue";
 import bakingPrep from "../assets/images/baking-prep-signup.webp";
+import { openAuth } from "../lib/auth-ui.js";
 </script>
 
 <template>
@@ -22,12 +23,13 @@ import bakingPrep from "../assets/images/baking-prep-signup.webp";
       </p>
 
       <div class="mx-auto mt-8 flex max-w-[640px] flex-col justify-center gap-3 sm:flex-row">
-        <a
-          href="/signin-with-chatgpt?return_to=/app/"
+        <button
+          type="button"
           class="focus-ring inline-flex min-h-14 items-center justify-center gap-3 bg-charcoal px-8 text-base font-semibold text-porcelain transition hover:bg-olive hover:text-charcoal"
+          @click="openAuth('register')"
         >
           Crear mi cuenta <PhArrowRight :size="19" weight="bold" aria-hidden="true" />
-        </a>
+        </button>
         <a
           href="/app/"
           class="focus-ring inline-flex min-h-14 items-center justify-center border-2 border-charcoal px-8 text-base font-semibold text-charcoal transition hover:bg-porcelain"
@@ -37,12 +39,12 @@ import bakingPrep from "../assets/images/baking-prep-signup.webp";
       </div>
 
       <p class="mx-auto mt-3 max-w-[520px] text-sm text-charcoal/70">
-        Gratis. Sin contraseñas nuevas: ingresás de forma segura con tu cuenta de ChatGPT.
+        Gratis. Tu usuario, tu contraseña y tu recetario en un solo lugar.
       </p>
 
       <p class="mt-5 text-base text-charcoal">
         ¿Ya tenés cuenta?
-        <a href="/signin-with-chatgpt?return_to=/app/" class="font-semibold underline decoration-2 underline-offset-4 hover:text-porcelain">Ingresá</a>
+        <button type="button" class="font-semibold underline decoration-2 underline-offset-4 hover:text-porcelain" @click="openAuth('login')">Ingresá</button>
       </p>
     </div>
   </section>

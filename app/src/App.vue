@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import {
   PhBookmarkSimple,
   PhCompass,
@@ -17,7 +17,7 @@ import RecipeCard from "./components/RecipeCard.vue";
 import { api } from "./lib/api.js";
 
 const loading = ref(true);
-const session = ref({ authenticated: false, user: null, loginUrl: "/signin-with-chatgpt?return_to=/app/" });
+const session = ref({ authenticated: false, user: null, loginUrl: "/app/?login=1" });
 const recipes = ref([]);
 const search = ref("");
 const activeView = ref("feed");
@@ -28,6 +28,11 @@ const selectedRecipe = ref(null);
 const comments = ref([]);
 const busy = ref(false);
 const toast = ref("");
+const authError = ref("");
+
+watch(loginOpen, (open) => {
+  if (open) authError.value = "";
+});
 
 const filteredRecipes = computed(() => {
   const term = search.value.trim().toLowerCase();
@@ -69,12 +74,15 @@ const startPublishing = () => {
   composerOpen.value = true;
 };
 
-const demoLogin = async () => {
+const authenticate = async ({ mode, payload }) => {
   busy.value = true;
+  authError.value = "";
   try {
-    session.value = await api.demoLogin();
+    session.value = mode === "register" ? await api.register(payload) : await api.login(payload);
     loginOpen.value = false;
-    flash("Tu lugar en la mesa está listo.");
+    flash(mode === "register" ? "Tu recetario ya está listo." : "Qué bueno verte de nuevo.");
+  } catch (failure) {
+    authError.value = failure.message;
   } finally {
     busy.value = false;
   }
@@ -156,6 +164,7 @@ onMounted(async () => {
     const params = new URLSearchParams(window.location.search);
     const requestedView = params.get("view") === "saved" ? "saved" : "feed";
     await loadView(requestedView);
+    if (["1", "register"].includes(params.get("login"))) loginOpen.value = true;
     if (params.get("compose") === "1") startPublishing();
   } catch (failure) {
     flash(failure.message);
@@ -272,7 +281,7 @@ onMounted(async () => {
 
     <p v-if="toast" class="fixed bottom-24 left-1/2 z-[70] -translate-x-1/2 bg-charcoal px-5 py-3 text-center text-sm font-semibold text-porcelain shadow-xl lg:bottom-8" role="status" aria-live="polite">{{ toast }}</p>
 
-    <LoginPanel :open="loginOpen" :demo-mode="api.isDemo" :busy="busy" @close="loginOpen = false" @demo-login="demoLogin" />
+    <LoginPanel :open="loginOpen" :busy="busy" :error-message="authError" @close="loginOpen = false" @submit="authenticate" />
     <ComposerModal :open="composerOpen" :busy="busy" @close="composerOpen = false" @submit="publishRecipe" />
     <CommentsPanel :open="commentsOpen" :recipe="selectedRecipe" :comments="comments" :authenticated="session.authenticated" :busy="busy" @close="commentsOpen = false" @login="loginOpen = true" @submit="addComment" />
   </div>

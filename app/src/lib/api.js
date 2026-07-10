@@ -2,6 +2,7 @@ import { demoComments, demoRecipes, demoUser } from "../data/demo.js";
 
 const useDemo = import.meta.env.DEV && import.meta.env.VITE_USE_REAL_API !== "true";
 let demoAuthenticated = false;
+let demoCurrentUser = structuredClone(demoUser);
 let recipes = structuredClone(demoRecipes);
 let comments = structuredClone(demoComments);
 
@@ -36,24 +37,35 @@ export const api = {
     if (!useDemo) return request("/api/session");
     await pause();
     return demoAuthenticated
-      ? { authenticated: true, user: demoUser, logoutUrl: "#" }
-      : { authenticated: false, user: null, loginUrl: "#" };
+      ? { authenticated: true, user: demoCurrentUser }
+      : { authenticated: false, user: null, loginUrl: "/app/?login=1" };
   },
 
-  async demoLogin() {
+  async login(payload) {
+    if (!useDemo) return request("/api/auth/login", { method: "POST", body: JSON.stringify(payload) });
     demoAuthenticated = true;
     await pause();
-    return { authenticated: true, user: demoUser, logoutUrl: "#" };
+    return { authenticated: true, user: demoCurrentUser };
+  },
+
+  async register(payload) {
+    if (!useDemo) return request("/api/auth/register", { method: "POST", body: JSON.stringify(payload) });
+    demoCurrentUser = {
+      ...demoCurrentUser,
+      email: payload.email,
+      handle: payload.handle.toLowerCase(),
+      displayName: payload.displayName,
+    };
+    demoAuthenticated = true;
+    await pause(260);
+    return { authenticated: true, user: demoCurrentUser };
   },
 
   async logout() {
-    if (!useDemo) {
-      window.location.assign("/signout-with-chatgpt?return_to=/app/");
-      return null;
-    }
+    if (!useDemo) return request("/api/auth/logout", { method: "POST", body: "{}" });
     demoAuthenticated = false;
     await pause();
-    return { authenticated: false, user: null, loginUrl: "#" };
+    return { authenticated: false, user: null, loginUrl: "/app/?login=1" };
   },
 
   async feed() {
@@ -80,7 +92,7 @@ export const api = {
       commentCount: 0,
       liked: false,
       saved: false,
-      author: demoUser,
+      author: demoCurrentUser,
     };
     recipes = [recipe, ...recipes];
     await pause(260);

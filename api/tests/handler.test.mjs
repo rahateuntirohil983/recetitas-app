@@ -2,16 +2,61 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { __test } from "../src/handler.js";
 
-test("only accepts development identity headers on localhost", () => {
-  const local = new Request("http://localhost/api/session", {
-    headers: { "x-dev-user-email": "Marti@Example.com" },
-  });
-  const production = new Request("https://recetitas.app/api/session", {
-    headers: { "x-dev-user-email": "marti@example.com" },
+test("normalizes and validates account registration", () => {
+  const registration = __test.validateRegistration({
+    displayName: "  Martina Ríos ",
+    handle: "@Marti_Cocina",
+    email: "MARTI@example.com",
+    password: "calabaza2026",
   });
 
-  assert.equal(__test.getIdentity(local)?.email, "marti@example.com");
-  assert.equal(__test.getIdentity(production), null);
+  assert.equal(registration.displayName, "Martina Ríos");
+  assert.equal(registration.handle, "marti_cocina");
+  assert.equal(registration.email, "marti@example.com");
+  assert.equal(registration.error, undefined);
+});
+
+test("rejects weak account passwords", () => {
+  const registration = __test.validateRegistration({
+    displayName: "Martina",
+    handle: "marti_cocina",
+    email: "marti@example.com",
+    password: "sololetras",
+  });
+  assert.match(registration.error, /contraseña/i);
+});
+
+test("hashes passwords with a unique salt and verifies them", async () => {
+  const first = await __test.hashPassword("calabaza2026");
+  const second = await __test.hashPassword("calabaza2026");
+
+  assert.notEqual(first.salt, second.salt);
+  assert.notEqual(first.hash, second.hash);
+  assert.equal(await __test.verifyPassword("calabaza2026", {
+    password_hash: first.hash,
+    password_salt: first.salt,
+    password_iterations: first.iterations,
+  }), true);
+  assert.equal(await __test.verifyPassword("otra-clave2026", {
+    password_hash: first.hash,
+    password_salt: first.salt,
+    password_iterations: first.iterations,
+  }), false);
+});
+
+test("ignores malformed cookie values", () => {
+  const request = new Request("https://recetitas.app/api/session", {
+    headers: { cookie: "recetitas_session=%E0%A4%A" },
+  });
+  assert.equal(__test.parseCookies(request).recetitas_session, "");
+});
+
+test("creates secure production session cookies", () => {
+  const request = new Request("https://recetitas.app/api/auth/login");
+  const cookie = __test.sessionCookie(request, "abc123");
+  assert.match(cookie, /HttpOnly/);
+  assert.match(cookie, /SameSite=Lax/);
+  assert.match(cookie, /Secure/);
 });
 
 test("rejects cross-origin writes", () => {

@@ -1,5 +1,7 @@
-const LOGIN_URL = "/signin-with-chatgpt?return_to=/app/";
 const IMAGE_KEYS = new Set(["pumpkin", "gnocchi", "baking"]);
+const SESSION_COOKIE = "recetitas_session";
+const SESSION_DAYS = 30;
+const PASSWORD_ITERATIONS = 210_000;
 
 const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS users (
@@ -50,20 +52,42 @@ const SCHEMA_STATEMENTS = [
     PRIMARY KEY (follower_id, followed_id),
     CHECK (follower_id <> followed_id)
   )`,
+  `CREATE TABLE IF NOT EXISTS credentials (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    password_hash TEXT NOT NULL,
+    password_salt TEXT NOT NULL,
+    password_iterations INTEGER NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS auth_attempts (
+    id TEXT PRIMARY KEY,
+    attempt_key TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
   "CREATE INDEX IF NOT EXISTS recipes_created_at_idx ON recipes(created_at DESC)",
   "CREATE INDEX IF NOT EXISTS recipes_author_id_idx ON recipes(author_id)",
   "CREATE INDEX IF NOT EXISTS comments_recipe_id_idx ON comments(recipe_id, created_at)",
+  "CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id)",
+  "CREATE INDEX IF NOT EXISTS sessions_expires_at_idx ON sessions(expires_at)",
+  "CREATE INDEX IF NOT EXISTS auth_attempts_key_created_idx ON auth_attempts(attempt_key, created_at)",
 ];
 
 let schemaReady;
 let demoCleanupReady;
 
-const json = (data, status = 200) => new Response(JSON.stringify(data), {
+const json = (data, status = 200, extraHeaders = {}) => new Response(JSON.stringify(data), {
   status,
   headers: {
     "content-type": "application/json; charset=utf-8",
     "cache-control": "no-store",
     "x-content-type-options": "nosniff",
+    ...extraHeaders,
   },
 });
 
@@ -114,35 +138,115 @@ const hasValidOrigin = (request) => {
   return !origin || origin === new URL(request.url).origin;
 };
 
-const getIdentity = (request) => {
-  const url = new URL(request.url);
-  const isLocal = ["localhost", "127.0.0.1", "::1"].includes(url.hostname);
-  const email = request.headers.get("oai-authenticated-user-email")
-    || (isLocal ? request.headers.get("x-dev-user-email") : null);
+const bytesToHex = (bytes) => [...new Uint8Array(bytes)]
+  .map((byte) => byte.toString(16).padStart(2, "0"))
+  .join("");
 
-  if (!email || !email.includes("@")) return null;
+const hexToBytes = (hex) => {
+  if (!/^[a-f0-9]+$/i.test(hex) || hex.length % 2 !== 0) return new Uint8Array();
+  return new Uint8Array(hex.match(/.{2}/g).map((pair) => Number.parseInt(pair, 16)));
+};
 
-  let displayName = "";
-  const encodedName = request.headers.get("oai-authenticated-user-full-name");
-  const encoding = request.headers.get("oai-authenticated-user-full-name-encoding");
+const randomHex = (length = 32) => {
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  return bytesToHex(bytes);
+};
 
-  if (encodedName && encoding === "percent-encoded-utf-8") {
-    try {
-      displayName = decodeURIComponent(encodedName);
-    } catch {
-      displayName = "";
-    }
-  }
+const sha256 = async (value) => bytesToHex(await crypto.subtle.digest(
+  "SHA-256",
+  new TextEncoder().encode(value),
+));
 
+const derivePassword = async (password, salt, iterations = PASSWORD_ITERATIONS) => {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"],
+  );
+  return bytesToHex(await crypto.subtle.deriveBits({
+    name: "PBKDF2",
+    hash: "SHA-256",
+    salt,
+    iterations,
+  }, key, 256));
+};
+
+const hashPassword = async (password) => {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
   return {
-    email: email.trim().toLowerCase(),
-    displayName: cleanText(displayName, 60),
+    hash: await derivePassword(password, salt),
+    salt: bytesToHex(salt),
+    iterations: PASSWORD_ITERATIONS,
   };
 };
 
-const userDto = (row) => ({
+const constantTimeEqual = (left, right) => {
+  if (left.length !== right.length) return false;
+  let difference = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  }
+  return difference === 0;
+};
+
+const verifyPassword = async (password, credential) => {
+  const salt = hexToBytes(credential.password_salt);
+  if (salt.length !== 16) return false;
+  const derived = await derivePassword(password, salt, Number(credential.password_iterations));
+  return constantTimeEqual(derived, credential.password_hash);
+};
+
+const parseCookies = (request) => Object.fromEntries(
+  (request.headers.get("cookie") || "")
+    .split(";")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const separator = part.indexOf("=");
+      if (separator === -1) return [part, ""];
+      const value = part.slice(separator + 1);
+      try {
+        return [part.slice(0, separator), decodeURIComponent(value)];
+      } catch {
+        return [part.slice(0, separator), ""];
+      }
+    }),
+);
+
+const sessionCookie = (request, token, maxAge = SESSION_DAYS * 24 * 60 * 60) => {
+  const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
+  return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;
+};
+
+const validateRegistration = (body) => {
+  const displayName = cleanText(body.displayName, 60);
+  const email = cleanText(body.email, 254).toLowerCase();
+  const handle = cleanText(body.handle, 24).toLowerCase().replace(/^@/, "");
+  const password = String(body.password || "");
+
+  if (displayName.length < 2) return { error: "Escribí tu nombre." };
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { error: "Ingresá un correo válido." };
+  if (!/^[a-z0-9_]{3,24}$/.test(handle)) return { error: "El usuario debe tener entre 3 y 24 letras, números o guiones bajos." };
+  if (password.length < 10 || password.length > 128 || !/[a-záéíóúñ]/i.test(password) || !/\d/.test(password)) {
+    return { error: "La contraseña debe tener al menos 10 caracteres, una letra y un número." };
+  }
+
+  return { displayName, email, handle, password };
+};
+
+const validateLogin = (body) => {
+  const identifier = cleanText(body.identifier, 254).toLowerCase().replace(/^@/, "");
+  const password = String(body.password || "");
+  if (!identifier || !password || password.length > 128) return { error: "Completá tu usuario y contraseña." };
+  return { identifier, password };
+};
+
+const userDto = (row, { includeEmail = true } = {}) => ({
   id: row.id,
-  email: row.email,
+  ...(includeEmail ? { email: row.email } : {}),
   handle: row.handle,
   displayName: row.display_name,
   bio: row.bio || "",
@@ -203,41 +307,66 @@ const cleanupDemoData = async (db) => {
   await demoCleanupReady;
 };
 
-const uniqueHandle = async (db, email) => {
-  const base = email.split("@")[0]
-    .toLowerCase()
-    .replace(/[^a-z0-9_]/g, "")
-    .slice(0, 18) || "cocinero";
-  const normalized = base.length >= 3 ? base : `${base}cocina`;
-  const existing = await db.prepare("SELECT id FROM users WHERE handle = ?").bind(normalized).first();
-  return existing ? `${normalized}_${crypto.randomUUID().slice(0, 4)}` : normalized;
-};
+const createSession = async (db, userId) => {
+  const token = randomHex(32);
+  const tokenHash = await sha256(token);
+  const createdAt = now();
+  const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
-const ensureUser = async (db, identity) => {
-  const existing = await db.prepare("SELECT * FROM users WHERE email = ?").bind(identity.email).first();
-  if (existing) return existing;
-
-  const user = {
-    id: createId("usr"),
-    email: identity.email,
-    handle: await uniqueHandle(db, identity.email),
-    displayName: identity.displayName || cleanText(identity.email.split("@")[0], 60),
-    createdAt: now(),
-  };
-
-  await db.prepare("INSERT INTO users (id, email, handle, display_name, bio, avatar_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .bind(user.id, user.email, user.handle, user.displayName, "", null, user.createdAt)
+  await db.prepare("INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)")
+    .bind(tokenHash, userId, createdAt, expiresAt)
     .run();
 
-  return db.prepare("SELECT * FROM users WHERE id = ?").bind(user.id).first();
+  return token;
+};
+
+const getSessionUser = async (request, db) => {
+  const token = parseCookies(request)[SESSION_COOKIE];
+  if (!/^[a-f0-9]{64}$/i.test(token || "")) return null;
+  const tokenHash = await sha256(token);
+  return db.prepare(`SELECT u.*
+    FROM sessions s
+    JOIN users u ON u.id = s.user_id
+    WHERE s.token_hash = ? AND s.expires_at > ?`)
+    .bind(tokenHash, now())
+    .first();
+};
+
+const removeSession = async (request, db) => {
+  const token = parseCookies(request)[SESSION_COOKIE];
+  if (!/^[a-f0-9]{64}$/i.test(token || "")) return;
+  await db.prepare("DELETE FROM sessions WHERE token_hash = ?")
+    .bind(await sha256(token))
+    .run();
+};
+
+const authAttemptKey = async (request, identifier) => sha256(
+  `${request.headers.get("cf-connecting-ip") || "local"}|${identifier}`,
+);
+
+const isLoginRateLimited = async (db, attemptKey) => {
+  const cutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+  const row = await db.prepare("SELECT COUNT(*) AS count FROM auth_attempts WHERE attempt_key = ? AND created_at > ?")
+    .bind(attemptKey, cutoff)
+    .first();
+  return Number(row?.count || 0) >= 5;
+};
+
+const recordFailedLogin = async (db, attemptKey) => {
+  const oldCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  await db.batch([
+    db.prepare("DELETE FROM auth_attempts WHERE created_at < ?").bind(oldCutoff),
+    db.prepare("INSERT INTO auth_attempts (id, attempt_key, created_at) VALUES (?, ?, ?)")
+      .bind(createId("att"), attemptKey, now()),
+  ]);
 };
 
 const requireUser = async (request, db) => {
-  const identity = getIdentity(request);
-  if (!identity) {
-    return { response: error(401, "AUTH_REQUIRED", "Iniciá sesión para continuar.", { loginUrl: LOGIN_URL }) };
+  const user = await getSessionUser(request, db);
+  if (!user) {
+    return { response: error(401, "AUTH_REQUIRED", "Iniciá sesión para continuar.", { loginUrl: "/app/?login=1" }) };
   }
-  return { user: await ensureUser(db, identity) };
+  return { user };
 };
 
 const getFeed = async (db, viewerId = "", limit = 20, authorId = null) => {
@@ -345,17 +474,95 @@ export async function handleApiRequest(request, env) {
 
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, "") || "/api";
-    const identity = getIdentity(request);
-    const viewer = identity ? await ensureUser(env.DB, identity) : null;
+    const viewer = await getSessionUser(request, env.DB);
 
     if (request.method === "GET" && path === "/api/health") {
       return json({ ok: true, service: "recetitas-api", database: "ready" });
     }
 
+    if (request.method === "POST" && path === "/api/auth/register") {
+      const registration = validateRegistration(await readBody(request));
+      if (registration.error) return error(422, "INVALID_REGISTRATION", registration.error);
+
+      const conflict = await env.DB.prepare("SELECT email, handle FROM users WHERE email = ? OR handle = ?")
+        .bind(registration.email, registration.handle)
+        .first();
+      if (conflict?.email?.toLowerCase() === registration.email) {
+        return error(409, "EMAIL_TAKEN", "Ya existe una cuenta con ese correo.");
+      }
+      if (conflict) return error(409, "HANDLE_TAKEN", "Ese usuario ya está ocupado.");
+
+      const userId = createId("usr");
+      const createdAt = now();
+      const password = await hashPassword(registration.password);
+      await env.DB.batch([
+        env.DB.prepare("INSERT INTO users (id, email, handle, display_name, bio, avatar_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+          .bind(userId, registration.email, registration.handle, registration.displayName, "", null, createdAt),
+        env.DB.prepare("INSERT INTO credentials (user_id, password_hash, password_salt, password_iterations, updated_at) VALUES (?, ?, ?, ?, ?)")
+          .bind(userId, password.hash, password.salt, password.iterations, createdAt),
+      ]);
+      const token = await createSession(env.DB, userId);
+      const user = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first();
+      return json(
+        { authenticated: true, user: userDto(user) },
+        201,
+        { "set-cookie": sessionCookie(request, token) },
+      );
+    }
+
+    if (request.method === "POST" && path === "/api/auth/login") {
+      const login = validateLogin(await readBody(request));
+      if (login.error) return error(422, "INVALID_LOGIN", login.error);
+
+      const attemptKey = await authAttemptKey(request, login.identifier);
+      if (await isLoginRateLimited(env.DB, attemptKey)) {
+        return error(429, "TOO_MANY_ATTEMPTS", "Demasiados intentos. Esperá 15 minutos y probá de nuevo.");
+      }
+
+      const credential = await env.DB.prepare(`SELECT u.*, c.password_hash, c.password_salt, c.password_iterations
+        FROM users u
+        JOIN credentials c ON c.user_id = u.id
+        WHERE u.email = ? OR u.handle = ?
+        LIMIT 1`)
+        .bind(login.identifier, login.identifier)
+        .first();
+      let validPassword = false;
+      if (credential) {
+        validPassword = await verifyPassword(login.password, credential);
+      } else {
+        await derivePassword(login.password, hexToBytes("00112233445566778899aabbccddeeff"));
+      }
+
+      if (!credential || !validPassword) {
+        await recordFailedLogin(env.DB, attemptKey);
+        return error(401, "INVALID_CREDENTIALS", "El usuario o la contraseña no coinciden.");
+      }
+
+      await env.DB.batch([
+        env.DB.prepare("DELETE FROM auth_attempts WHERE attempt_key = ?").bind(attemptKey),
+        env.DB.prepare("DELETE FROM sessions WHERE expires_at <= ?").bind(now()),
+      ]);
+      const token = await createSession(env.DB, credential.id);
+      return json(
+        { authenticated: true, user: userDto(credential) },
+        200,
+        { "set-cookie": sessionCookie(request, token) },
+      );
+    }
+
+    if (request.method === "POST" && path === "/api/auth/logout") {
+      await removeSession(request, env.DB);
+      return json(
+        { authenticated: false, user: null },
+        200,
+        { "set-cookie": sessionCookie(request, "", 0) },
+      );
+    }
+
     if (request.method === "GET" && path === "/api/session") {
       return json(viewer
-        ? { authenticated: true, user: userDto(viewer), logoutUrl: "/signout-with-chatgpt?return_to=/app/" }
-        : { authenticated: false, user: null, loginUrl: LOGIN_URL });
+        ? { authenticated: true, user: userDto(viewer) }
+        : { authenticated: false, user: null, loginUrl: "/app/?login=1" });
     }
 
     if (request.method === "GET" && path === "/api/feed") {
@@ -510,7 +717,7 @@ export async function handleApiRequest(request, env) {
       if (!profile) return error(404, "PROFILE_NOT_FOUND", "No encontramos ese perfil.");
       return json({
         profile: {
-          ...userDto(profile),
+          ...userDto(profile, { includeEmail: false }),
           recipeCount: Number(profile.recipe_count || 0),
           followerCount: Number(profile.follower_count || 0),
           followed: Boolean(profile.followed_by_me),
@@ -554,7 +761,12 @@ export async function handleApiRequest(request, env) {
 export const __test = {
   cleanText,
   cleanLines,
-  getIdentity,
+  hashPassword,
   hasValidOrigin,
+  parseCookies,
+  sessionCookie,
+  validateLogin,
+  validateRegistration,
   validateRecipe,
+  verifyPassword,
 };

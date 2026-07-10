@@ -9,7 +9,7 @@ Landing y primera versión de la red social de recetitas.app, una comunidad para
 - Phosphor Icons
 - API sobre Cloudflare Worker
 - D1 para perfiles, recetas, likes, guardados, comentarios y follows
-- Sign in with ChatGPT administrado por Sites
+- Registro e inicio de sesión propios con usuario, correo y contraseña
 - Feed inicial vacío: las recetas visibles son publicadas por usuarios, no contenido de muestra
 
 ## Estructura

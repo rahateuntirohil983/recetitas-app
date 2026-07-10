@@ -5,6 +5,9 @@ export const tables = {
   bookmarks: "bookmarks",
   comments: "comments",
   follows: "follows",
+  credentials: "credentials",
+  sessions: "sessions",
+  authAttempts: "auth_attempts",
 } as const;
 
 export type ImageKey = "pumpkin" | "gnocchi" | "baking";
