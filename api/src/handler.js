@@ -1,7 +1,7 @@
 const IMAGE_KEYS = new Set(["pumpkin", "gnocchi", "baking"]);
 const SESSION_COOKIE = "recetitas_session";
 const SESSION_DAYS = 30;
-const PASSWORD_ITERATIONS = 210_000;
+const PASSWORD_ITERATIONS = 100_000;
 
 const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS users (
@@ -162,7 +162,7 @@ const derivePassword = async (password, salt, iterations = PASSWORD_ITERATIONS) 
   const key = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(password),
-    "PBKDF2",
+    { name: "PBKDF2" },
     false,
     ["deriveBits"],
   );
