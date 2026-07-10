@@ -94,3 +94,16 @@ test("explains when the recipe story is too short", () => {
   });
   assert.match(recipe.error, /historia corta.*10 caracteres/i);
 });
+
+test("only accepts recipe images from the configured media service", () => {
+  const recipe = __test.validateRecipe({
+    title: "Pan casero",
+    summary: "Una receta para todos los domingos.",
+    cookMinutes: 40,
+    servings: 4,
+    ingredients: ["Harina"],
+    steps: ["Amasar"],
+    imageUrl: "https://attacker.example/foto.jpg",
+  }, "https://media-recetitas.hex-rp.com");
+  assert.match(recipe.error, /imagen.*no es válida/i);
+});

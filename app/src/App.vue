@@ -26,6 +26,7 @@ const search = ref("");
 const activeView = ref("feed");
 const loginOpen = ref(false);
 const composerOpen = ref(false);
+const composerKey = ref(0);
 const commentsOpen = ref(false);
 const selectedRecipe = ref(null);
 const comments = ref([]);
@@ -274,9 +275,12 @@ const addComment = async (body) => {
 const publishRecipe = async (payload) => {
   busy.value = true;
   try {
-    const response = await api.createRecipe(payload);
+    const { imageFile, ...recipePayload } = payload;
+    if (imageFile) recipePayload.imageUrl = (await api.uploadImage(imageFile)).imageUrl;
+    const response = await api.createRecipe(recipePayload);
     recipes.value = [response.recipe, ...recipes.value];
     composerOpen.value = false;
+    composerKey.value += 1;
     activeView.value = "feed";
     window.history.pushState({}, "", "/app/");
     flash("Tu receta ya está en la mesa.");
@@ -441,7 +445,7 @@ onMounted(async () => {
     <p v-if="toast" class="fixed bottom-24 left-1/2 z-[70] -translate-x-1/2 bg-charcoal px-5 py-3 text-center text-sm font-semibold text-porcelain shadow-xl lg:bottom-8" role="status" aria-live="polite">{{ toast }}</p>
 
     <LoginPanel :open="loginOpen" :busy="busy" :error-message="authError" @close="loginOpen = false" @submit="authenticate" />
-    <ComposerModal :open="composerOpen" :busy="busy" @close="composerOpen = false" @submit="publishRecipe" />
+    <ComposerModal :key="composerKey" :open="composerOpen" :busy="busy" @close="composerOpen = false" @submit="publishRecipe" />
     <CommentsPanel :open="commentsOpen" :recipe="selectedRecipe" :comments="comments" :authenticated="session.authenticated" :busy="busy" @close="commentsOpen = false" @login="loginOpen = true" @submit="addComment" />
     <EditProfileModal :open="editProfileOpen" :profile="profile" :busy="busy" :error-message="editProfileError" @close="editProfileOpen = false" @submit="saveProfile" />
     <ConnectionsPanel :open="connectionsOpen" :type="connectionsType" :people="connectionsPeople" :loading="connectionsLoading" @close="connectionsOpen = false" @profile="connectionsOpen = false; openProfile($event)" />

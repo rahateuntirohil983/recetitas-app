@@ -17,3 +17,4 @@ When implementing from a selected generated mock, treat that image as the source
 - Authentication: recetitas.app owns registration and login with email/handle plus password. Passwords use salted PBKDF2 hashes; opaque sessions are stored hashed in D1 and sent only through HttpOnly same-site cookies.
 - Content integrity: production and local previews start without synthetic recipes; every visible community recipe must be created by a signed-in user.
 - Profile navigation: public profiles use stable `/app/u/:handle` URLs; profile edits, follow relationships, connection lists, and owned-recipe deletion remain same-origin API operations.
+- Recipe media: browsers upload only through the authenticated same-origin API; the Worker forwards validated JPEG/PNG/WebP bytes to the VPS media service, while D1 stores only the resulting HTTPS URL.

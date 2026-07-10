@@ -2,6 +2,8 @@ const IMAGE_KEYS = new Set(["pumpkin", "gnocchi", "baking"]);
 const SESSION_COOKIE = "recetitas_session";
 const SESSION_DAYS = 30;
 const PASSWORD_ITERATIONS = 100_000;
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS users (
@@ -434,7 +436,7 @@ const toggleRelation = async (db, table, userId, recipeId) => {
   return true;
 };
 
-const validateRecipe = (body) => {
+const validateRecipe = (body, mediaBaseUrl = "") => {
   const title = cleanText(body.title, 90);
   const summary = cleanText(body.summary, 280);
   const ingredients = cleanLines(body.ingredients, 40, 120);
@@ -443,12 +445,18 @@ const validateRecipe = (body) => {
   const servings = Number(body.servings);
   const imageKey = IMAGE_KEYS.has(body.imageKey) ? body.imageKey : "pumpkin";
   const rawImageUrl = cleanText(body.imageUrl, 500);
-  const imageUrl = rawImageUrl && /^https:\/\//i.test(rawImageUrl) ? rawImageUrl : null;
+  const normalizedMediaBase = String(mediaBaseUrl || "").replace(/\/$/, "");
+  const imageUrl = rawImageUrl
+    && /^https:\/\//i.test(rawImageUrl)
+    && (!normalizedMediaBase || rawImageUrl.startsWith(`${normalizedMediaBase}/files/`))
+    ? rawImageUrl
+    : null;
 
   if (title.length < 3) return { error: "El nombre de la receta debe tener al menos 3 caracteres." };
   if (summary.length < 10) return { error: "La historia corta debe tener al menos 10 caracteres." };
   if (ingredients.length === 0) return { error: "Agregá al menos un ingrediente." };
   if (steps.length === 0) return { error: "Agregá al menos un paso." };
+  if (rawImageUrl && !imageUrl) return { error: "La imagen de la receta no es válida." };
   if (!Number.isInteger(cookMinutes) || cookMinutes < 1 || cookMinutes > 1440) {
     return { error: "El tiempo de cocción no es válido." };
   }
@@ -482,6 +490,48 @@ export async function handleApiRequest(request, env) {
 
     if (request.method === "GET" && path === "/api/health") {
       return json({ ok: true, service: "recetitas-api", database: "ready" });
+    }
+
+    if (request.method === "POST" && path === "/api/uploads") {
+      const auth = await requireUser(request, env.DB);
+      if (auth.response) return auth.response;
+      if (!env.MEDIA_UPLOAD_URL || !env.MEDIA_UPLOAD_TOKEN) {
+        return error(503, "MEDIA_UNAVAILABLE", "La subida de imágenes todavía no está disponible.");
+      }
+
+      const contentType = String(request.headers.get("content-type") || "").split(";")[0].toLowerCase();
+      const contentLength = Number(request.headers.get("content-length") || 0);
+      if (!ALLOWED_IMAGE_TYPES.has(contentType)) {
+        return error(415, "UNSUPPORTED_IMAGE", "Usá una imagen JPG, PNG o WebP.");
+      }
+      if (contentLength > MAX_IMAGE_BYTES) {
+        return error(413, "IMAGE_TOO_LARGE", "La imagen puede pesar hasta 8 MB.");
+      }
+
+      const bytes = await request.arrayBuffer();
+      if (!bytes.byteLength || bytes.byteLength > MAX_IMAGE_BYTES) {
+        return error(bytes.byteLength ? 413 : 422, bytes.byteLength ? "IMAGE_TOO_LARGE" : "EMPTY_IMAGE", bytes.byteLength ? "La imagen puede pesar hasta 8 MB." : "Elegí una imagen antes de subirla.");
+      }
+
+      const upstream = await fetch(env.MEDIA_UPLOAD_URL, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${env.MEDIA_UPLOAD_TOKEN}`,
+          "content-type": contentType,
+          "x-user-id": auth.user.id,
+        },
+        body: bytes,
+      });
+      const uploaded = await upstream.json().catch(() => null);
+      if (!upstream.ok || !uploaded?.url) {
+        return error(502, "UPLOAD_FAILED", "No pudimos guardar la imagen. Probá nuevamente.");
+      }
+
+      const mediaOrigin = new URL(env.MEDIA_UPLOAD_URL).origin;
+      if (!String(uploaded.url).startsWith(`${mediaOrigin}/files/`)) {
+        return error(502, "INVALID_MEDIA_RESPONSE", "El servidor de imágenes devolvió una respuesta inválida.");
+      }
+      return json({ imageUrl: uploaded.url }, 201);
     }
 
     if (request.method === "POST" && path === "/api/auth/register") {
@@ -621,7 +671,8 @@ export async function handleApiRequest(request, env) {
       const auth = await requireUser(request, env.DB);
       if (auth.response) return auth.response;
       const body = await readBody(request);
-      const recipe = validateRecipe(body);
+      const mediaBaseUrl = env.MEDIA_UPLOAD_URL ? new URL(env.MEDIA_UPLOAD_URL).origin : "";
+      const recipe = validateRecipe(body, mediaBaseUrl);
       if (recipe.error) return error(422, "INVALID_RECIPE", recipe.error);
 
       const recipeId = createId("rcp");
@@ -703,6 +754,17 @@ export async function handleApiRequest(request, env) {
         const auth = await requireUser(request, env.DB);
         if (auth.response) return auth.response;
         if (recipe.author.id !== auth.user.id) return error(403, "NOT_OWNER", "Solo podés borrar tus recetas.");
+        if (recipe.imageUrl && env.MEDIA_UPLOAD_URL && env.MEDIA_UPLOAD_TOKEN) {
+          const deleted = await fetch(new URL("/delete", env.MEDIA_UPLOAD_URL), {
+            method: "DELETE",
+            headers: {
+              authorization: `Bearer ${env.MEDIA_UPLOAD_TOKEN}`,
+              "x-user-id": auth.user.id,
+              "x-file-url": recipe.imageUrl,
+            },
+          });
+          if (!deleted.ok) return error(502, "MEDIA_DELETE_FAILED", "No pudimos eliminar la imagen. Probá nuevamente.");
+        }
         await env.DB.prepare("DELETE FROM recipes WHERE id = ?").bind(recipeId).run();
         return new Response(null, { status: 204 });
       }

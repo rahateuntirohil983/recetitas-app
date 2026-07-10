@@ -3,13 +3,11 @@ import {
   PhBookmarkSimple,
   PhChatCircleDots,
   PhClock,
+  PhCookingPot,
   PhHeart,
   PhTrash,
   PhUsers,
 } from "@phosphor-icons/vue";
-import pumpkin from "../assets/pumpkin-gnocchi-hero.webp";
-import gnocchi from "../assets/making-gnocchi-hands.webp";
-import baking from "../assets/baking-prep-signup.webp";
 
 defineProps({
   recipe: { type: Object, required: true },
@@ -19,7 +17,6 @@ defineProps({
 });
 defineEmits(["like", "save", "comments", "profile", "follow", "delete"]);
 
-const images = { pumpkin, gnocchi, baking };
 const initials = (name) => String(name || "R").trim().slice(0, 1).toUpperCase();
 </script>
 
@@ -41,7 +38,10 @@ const initials = (name) => String(name || "R").trim().slice(0, 1).toUpperCase();
     </header>
 
     <figure class="relative aspect-[16/10] overflow-hidden bg-cream">
-      <img :src="recipe.imageUrl || images[recipe.imageKey] || pumpkin" :alt="recipe.title" class="h-full w-full object-cover transition duration-500 hover:scale-[1.02]" loading="lazy" decoding="async" />
+      <img v-if="recipe.imageUrl" :src="recipe.imageUrl" :alt="recipe.title" class="h-full w-full object-cover transition duration-500 hover:scale-[1.02]" loading="lazy" decoding="async" />
+      <div v-else class="grid h-full place-items-center bg-olive/45 text-center text-charcoal" role="img" :aria-label="`${recipe.title}, sin foto`">
+        <div><PhCookingPot :size="72" weight="thin" class="mx-auto" aria-hidden="true" /><p class="mt-3 font-display text-2xl font-bold">Receta sin foto.</p></div>
+      </div>
       <figcaption class="absolute bottom-4 left-4 flex gap-2">
         <span class="inline-flex items-center gap-1.5 bg-porcelain px-3 py-2 text-sm font-semibold text-charcoal">
           <PhClock :size="17" aria-hidden="true" /> {{ recipe.cookMinutes }} min

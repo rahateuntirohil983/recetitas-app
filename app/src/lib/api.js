@@ -144,6 +144,16 @@ export const api = {
     return { recipe };
   },
 
+  async uploadImage(file) {
+    if (!useDemo) return request("/api/uploads", {
+      method: "POST",
+      headers: { "content-type": file.type },
+      body: file,
+    });
+    await pause(320);
+    return { imageUrl: URL.createObjectURL(file) };
+  },
+
   async toggleLike(recipeId) {
     if (!useDemo) return request(`/api/recipes/${recipeId}/like`, { method: "POST", body: "{}" });
     if (!demoAuthenticated) throw Object.assign(new Error("Iniciá sesión para dar me gusta."), { status: 401 });

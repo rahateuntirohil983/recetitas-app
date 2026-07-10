@@ -1,0 +1,21 @@
+[Unit]
+Description=recetitas.app media upload service
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/recetitas-media/app
+EnvironmentFile=/opt/recetitas-media/media.env
+ExecStart=/usr/bin/node /opt/recetitas-media/app/server.mjs
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/recetitas-media
+
+[Install]
+WantedBy=multi-user.target

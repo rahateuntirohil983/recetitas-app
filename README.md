@@ -12,6 +12,7 @@ Landing y primera versión de la red social de recetitas.app, una comunidad para
 - Registro e inicio de sesión propios con usuario, correo y contraseña
 - Feed inicial vacío: las recetas visibles son publicadas por usuarios, no contenido de muestra
 - Perfiles públicos bajo `/app/u/:usuario`, edición del perfil, seguidores y recetarios personales
+- Fotos propias para recetas, validadas por la API y almacenadas en el servicio de medios de la VPS
 
 ## Estructura
 
