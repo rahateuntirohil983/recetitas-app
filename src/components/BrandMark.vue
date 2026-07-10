@@ -1,5 +1,5 @@
 <script setup>
-import logoSource from "../assets/images/chef-pig-logo.jpeg";
+import logoSource from "../assets/images/chef-pig-logo.webp";
 
 defineProps({
   compact: {
@@ -16,7 +16,7 @@ defineProps({
 <template>
   <a href="#top" class="group inline-flex flex-col items-start" aria-label="Volver al inicio">
     <span :class="['logo-window', compact ? 'logo-window--compact' : '']">
-      <img :src="logoSource" alt="Cerdito cocinero de recetitas.app" />
+      <img :src="logoSource" alt="Cerdito cocinero de recetitas.app" decoding="async" />
     </span>
     <span
       v-if="showName"

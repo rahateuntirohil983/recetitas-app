@@ -1,7 +1,7 @@
 <script setup>
 import { ref } from "vue";
 import { PhCheckCircle, PhPlant } from "@phosphor-icons/vue";
-import bakingPrep from "../assets/images/baking-prep-signup.png";
+import bakingPrep from "../assets/images/baking-prep-signup.webp";
 
 const email = ref("");
 const submitted = ref(false);
@@ -18,7 +18,7 @@ const submit = () => {
     </div>
 
     <figure class="absolute -bottom-16 -right-24 hidden h-[310px] w-[390px] overflow-hidden rounded-[50%] md:block lg:-right-10">
-      <img :src="bakingPrep" alt="Ingredientes preparados para cocinar" class="h-full w-full object-cover" />
+        <img :src="bakingPrep" alt="Ingredientes preparados para cocinar" class="h-full w-full object-cover" loading="lazy" decoding="async" />
     </figure>
 
     <div class="relative z-10 mx-auto max-w-[760px] text-center">
@@ -49,6 +49,10 @@ const submit = () => {
           Crear mi cuenta
         </button>
       </form>
+
+      <p v-if="!submitted" class="mx-auto mt-3 max-w-[520px] text-sm text-charcoal/70">
+        Sin spam. Solo te avisamos cuando abramos las puertas.
+      </p>
 
       <p class="mt-5 text-base text-charcoal">
         ¿Ya tenés cuenta?

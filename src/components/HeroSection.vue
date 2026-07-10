@@ -1,8 +1,8 @@
 <script setup>
 import { PhAsteriskSimple } from "@phosphor-icons/vue";
 import BrandMark from "./BrandMark.vue";
-import heroFood from "../assets/images/pumpkin-gnocchi-hero.png";
-import makingGnocchi from "../assets/images/making-gnocchi-hands.png";
+import heroFood from "../assets/images/pumpkin-gnocchi-hero.webp";
+import makingGnocchi from "../assets/images/making-gnocchi-hands.webp";
 
 defineEmits(["explore", "share"]);
 </script>
@@ -52,7 +52,7 @@ defineEmits(["explore", "share"]);
         <div class="hero-mobile-green absolute inset-x-0 bottom-0 h-[47%] bg-olive md:hidden" aria-hidden="true" />
 
         <figure class="hero-food-mask absolute right-[3%] top-[7%] z-10 h-[46%] w-[77%] overflow-hidden bg-cream md:right-[4%] md:top-[5%] md:h-[44%] md:w-[82%] lg:right-[7%] lg:w-[78%]">
-          <img :src="heroFood" alt="Ñoquis de calabaza con salvia y parmesano" class="h-full w-full object-cover" />
+          <img :src="heroFood" alt="Ñoquis de calabaza con salvia y parmesano" class="h-full w-full object-cover" decoding="async" fetchpriority="high" />
         </figure>
 
         <article class="recipe-note absolute right-[14%] top-[42%] z-30 w-[68%] bg-porcelain px-6 py-7 text-charcoal shadow-[0_16px_40px_rgba(0,0,0,0.12)] md:right-[14%] md:top-[39%] md:w-[70%] lg:w-[62%] lg:px-8 lg:py-8">
@@ -63,7 +63,7 @@ defineEmits(["explore", "share"]);
         </article>
 
         <figure class="hands-mask absolute bottom-[7%] left-[5%] z-20 h-[29%] w-[70%] overflow-hidden bg-cream md:bottom-[7%] md:left-[3%] md:w-[68%] lg:left-[8%] lg:w-[62%]">
-          <img :src="makingGnocchi" alt="Manos preparando ñoquis caseros" class="h-full w-full object-cover" />
+          <img :src="makingGnocchi" alt="Manos preparando ñoquis caseros" class="h-full w-full object-cover" loading="lazy" decoding="async" />
         </figure>
 
         <PhAsteriskSimple
