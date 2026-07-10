@@ -4,19 +4,19 @@ import ManifestSection from "./components/ManifestSection.vue";
 import JoinSection from "./components/JoinSection.vue";
 import SiteFooter from "./components/SiteFooter.vue";
 
-const scrollTo = (id) => {
-  document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+const openCommunity = (query = "") => {
+  window.location.assign(`/app/${query}`);
 };
 </script>
 
 <template>
   <main class="overflow-hidden bg-porcelain text-ink">
     <HeroSection
-      @explore="scrollTo('como-funciona')"
-      @share="scrollTo('sumate')"
+      @explore="openCommunity()"
+      @share="openCommunity('?compose=1')"
     />
     <ManifestSection />
     <JoinSection />
-    <SiteFooter @navigate="scrollTo" />
+    <SiteFooter />
   </main>
 </template>

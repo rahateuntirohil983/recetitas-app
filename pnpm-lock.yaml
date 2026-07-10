@@ -28,6 +28,28 @@ importers:
         specifier: 6.4.2
         version: 6.4.2(jiti@2.7.0)(lightningcss@1.32.0)
 
+  app:
+    dependencies:
+      '@phosphor-icons/vue':
+        specifier: ^2.2.1
+        version: 2.2.1(vue@3.5.39)
+      vue:
+        specifier: ^3.5.39
+        version: 3.5.39
+    devDependencies:
+      '@tailwindcss/vite':
+        specifier: ^4.3.2
+        version: 4.3.2(vite@6.4.2(jiti@2.7.0)(lightningcss@1.32.0))
+      '@vitejs/plugin-vue':
+        specifier: ^6.0.7
+        version: 6.0.7(vite@6.4.2(jiti@2.7.0)(lightningcss@1.32.0))(vue@3.5.39)
+      tailwindcss:
+        specifier: ^4.3.2
+        version: 4.3.2
+      vite:
+        specifier: 6.4.2
+        version: 6.4.2(jiti@2.7.0)(lightningcss@1.32.0)
+
 packages:
 
   '@babel/helper-string-parser@7.29.7':

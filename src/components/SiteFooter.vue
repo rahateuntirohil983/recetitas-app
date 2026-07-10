@@ -1,8 +1,6 @@
 <script setup>
 import { PhArrowUpRight } from "@phosphor-icons/vue";
 import BrandMark from "./BrandMark.vue";
-
-defineEmits(["navigate"]);
 </script>
 
 <template>
@@ -11,11 +9,11 @@ defineEmits(["navigate"]);
       <BrandMark compact :show-name="false" />
 
       <nav aria-label="Navegación del pie" class="grid grid-cols-2 gap-x-10 gap-y-3 text-sm sm:max-w-[460px]">
-        <button type="button" class="footer-link text-left" @click="$emit('navigate', 'como-funciona')">Explorar recetas</button>
+        <a class="footer-link" href="/app/">Explorar recetas</a>
         <a class="footer-link" href="mailto:hola@recetitas.app?subject=Quiero saber más sobre la comunidad">Comunidad</a>
-        <button type="button" class="footer-link text-left" @click="$emit('navigate', 'sumate')">Mis guardadas</button>
+        <a class="footer-link" href="/app/?view=saved">Mis guardadas</a>
         <a class="footer-link" href="mailto:hola@recetitas.app?subject=Quiénes somos">Quiénes somos</a>
-        <button type="button" class="footer-link text-left" @click="$emit('navigate', 'sumate')">Compartir receta</button>
+        <a class="footer-link" href="/app/?compose=1">Compartir receta</a>
         <a class="footer-link inline-flex items-center gap-1" href="mailto:hola@recetitas.app">Contacto <PhArrowUpRight :size="14" aria-hidden="true" /></a>
       </nav>
 

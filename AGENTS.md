@@ -12,3 +12,6 @@ When implementing from a selected generated mock, treat that image as the source
 - Styling: Tailwind CSS v4 through the official Vite plugin, with shared tokens in `src/styles.css`.
 - Visual source of truth: `design-reference.png` (selected ideation direction 2).
 - Product structure: keep this prototype self-contained inside `landing/` so future product areas can live in sibling folders.
+- Social app: keep the signed-in Vue experience in `app/`, built under `/app/` and visually derived from the landing tokens.
+- API: keep same-origin Worker endpoints in `api/`; use D1 through the logical `DB` binding for durable profiles, recipes, likes, bookmarks, comments, and follows.
+- Authentication: production identity comes from Sites-managed Sign in with ChatGPT headers; development-only demo identity must never be trusted on non-local hosts.

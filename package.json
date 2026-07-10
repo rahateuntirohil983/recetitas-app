@@ -5,7 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && node scripts/prepare-site-worker.mjs",
+    "dev:app": "pnpm --dir app dev",
+    "build": "vite build && pnpm --dir app build && node scripts/prepare-site-worker.mjs",
+    "build:landing": "vite build",
+    "build:app": "pnpm --dir app build",
+    "test:api": "node --test api/tests/*.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

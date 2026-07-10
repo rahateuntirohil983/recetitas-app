@@ -1,0 +1,67 @@
+<script setup>
+import { ref, watch } from "vue";
+import { PhArrowUp, PhX } from "@phosphor-icons/vue";
+
+const props = defineProps({
+  open: { type: Boolean, default: false },
+  recipe: { type: Object, default: null },
+  comments: { type: Array, default: () => [] },
+  authenticated: { type: Boolean, default: false },
+  busy: { type: Boolean, default: false },
+});
+
+const emit = defineEmits(["close", "submit", "login"]);
+const body = ref("");
+
+watch(() => props.recipe?.id, () => { body.value = ""; });
+
+const submit = () => {
+  const value = body.value.trim();
+  if (!value) return;
+  emit("submit", value);
+  body.value = "";
+};
+
+const initial = (name) => String(name || "R").slice(0, 1).toUpperCase();
+</script>
+
+<template>
+  <Teleport to="body">
+    <div v-if="open" class="fixed inset-0 z-50 bg-charcoal/60 backdrop-blur-sm" @click.self="$emit('close')">
+      <aside class="absolute inset-y-0 right-0 flex w-full max-w-[520px] flex-col bg-porcelain shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="comments-title">
+        <header class="flex items-start justify-between gap-4 border-b-2 border-charcoal px-5 py-5 sm:px-7">
+          <div>
+            <p class="text-xs font-bold uppercase tracking-[0.16em] text-olive-dark">La sobremesa</p>
+            <h2 id="comments-title" class="mt-1 font-display text-3xl font-bold leading-tight text-charcoal">Comentarios</h2>
+            <p class="mt-1 line-clamp-1 text-sm text-charcoal/60">{{ recipe?.title }}</p>
+          </div>
+          <button type="button" class="focus-ring grid size-11 place-items-center border-2 border-charcoal text-charcoal hover:bg-blush" aria-label="Cerrar comentarios" @click="$emit('close')">
+            <PhX :size="21" aria-hidden="true" />
+          </button>
+        </header>
+
+        <div class="flex-1 space-y-5 overflow-y-auto px-5 py-6 sm:px-7">
+          <article v-for="comment in comments" :key="comment.id" class="flex gap-3">
+            <span class="grid size-10 shrink-0 place-items-center rounded-full bg-blush font-display text-lg font-bold" aria-hidden="true">{{ initial(comment.author.displayName) }}</span>
+            <div class="min-w-0 flex-1 bg-cream px-4 py-3">
+              <p class="text-sm font-semibold text-charcoal">{{ comment.author.displayName }} <span class="font-normal text-charcoal/50">@{{ comment.author.handle }}</span></p>
+              <p class="mt-1 leading-relaxed text-charcoal/75">{{ comment.body }}</p>
+            </div>
+          </article>
+          <p v-if="!comments.length" class="py-12 text-center font-display text-2xl text-charcoal/55">Sé la primera persona en comentar.</p>
+        </div>
+
+        <footer class="border-t-2 border-charcoal bg-blush px-5 py-5 sm:px-7">
+          <button v-if="!authenticated" type="button" class="focus-ring min-h-12 w-full bg-charcoal px-5 font-semibold text-porcelain" @click="$emit('login')">Entrá para comentar</button>
+          <form v-else class="flex items-end gap-3" @submit.prevent="submit">
+            <label class="sr-only" for="comment-body">Tu comentario</label>
+            <textarea id="comment-body" v-model="body" maxlength="500" class="min-h-12 flex-1 resize-none border-2 border-charcoal bg-porcelain px-4 py-3 text-charcoal outline-none focus:border-olive-dark" placeholder="¿Cómo te salió?" />
+            <button type="submit" class="focus-ring grid size-12 shrink-0 place-items-center bg-charcoal text-porcelain hover:bg-olive hover:text-charcoal" :disabled="busy || !body.trim()" aria-label="Publicar comentario">
+              <PhArrowUp :size="22" aria-hidden="true" />
+            </button>
+          </form>
+        </footer>
+      </aside>
+    </div>
+  </Teleport>
+</template>
