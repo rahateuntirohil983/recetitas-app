@@ -4,14 +4,20 @@ import {
   PhChatCircleDots,
   PhClock,
   PhHeart,
+  PhTrash,
   PhUsers,
 } from "@phosphor-icons/vue";
 import pumpkin from "../assets/pumpkin-gnocchi-hero.webp";
 import gnocchi from "../assets/making-gnocchi-hands.webp";
 import baking from "../assets/baking-prep-signup.webp";
 
-defineProps({ recipe: { type: Object, required: true } });
-defineEmits(["like", "save", "comments"]);
+defineProps({
+  recipe: { type: Object, required: true },
+  viewerId: { type: String, default: "" },
+  showFollow: { type: Boolean, default: true },
+  canDelete: { type: Boolean, default: false },
+});
+defineEmits(["like", "save", "comments", "profile", "follow", "delete"]);
 
 const images = { pumpkin, gnocchi, baking };
 const initials = (name) => String(name || "R").trim().slice(0, 1).toUpperCase();
@@ -20,7 +26,7 @@ const initials = (name) => String(name || "R").trim().slice(0, 1).toUpperCase();
 <template>
   <article class="recipe-card overflow-hidden border-2 border-charcoal bg-porcelain">
     <header class="flex items-center justify-between gap-4 px-5 py-4 sm:px-6">
-      <div class="flex min-w-0 items-center gap-3">
+      <button type="button" class="focus-ring flex min-w-0 items-center gap-3 text-left" @click="$emit('profile', recipe.author.handle)">
         <span class="grid size-11 shrink-0 place-items-center rounded-full bg-blush font-display text-xl font-bold text-charcoal" aria-hidden="true">
           {{ initials(recipe.author.displayName) }}
         </span>
@@ -28,9 +34,9 @@ const initials = (name) => String(name || "R").trim().slice(0, 1).toUpperCase();
           <p class="truncate font-semibold text-charcoal">{{ recipe.author.displayName }}</p>
           <p class="truncate text-sm text-charcoal/55">@{{ recipe.author.handle }}</p>
         </div>
-      </div>
-      <button type="button" class="focus-ring min-h-10 border border-charcoal/20 px-4 text-sm font-semibold text-charcoal hover:bg-blush">
-        Seguir
+      </button>
+      <button v-if="showFollow && viewerId !== recipe.author.id" type="button" class="focus-ring min-h-10 border border-charcoal/20 px-4 text-sm font-semibold text-charcoal hover:bg-blush" :class="recipe.author.followed && 'bg-olive'" @click="$emit('follow', recipe.author)">
+        {{ recipe.author.followed ? "Siguiendo" : "Seguir" }}
       </button>
     </header>
 
@@ -52,7 +58,7 @@ const initials = (name) => String(name || "R").trim().slice(0, 1).toUpperCase();
       </h2>
       <p class="mt-3 text-base leading-relaxed text-charcoal/72">{{ recipe.summary }}</p>
 
-      <div class="mt-5 flex items-center justify-between border-t border-charcoal/15 pt-4">
+      <div class="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-charcoal/15 pt-4">
         <div class="flex items-center gap-2">
           <button type="button" :aria-pressed="recipe.liked" class="social-action focus-ring" :class="recipe.liked && 'social-action--active'" aria-label="Me gusta" @click="$emit('like', recipe)">
             <PhHeart :size="22" :weight="recipe.liked ? 'fill' : 'regular'" aria-hidden="true" />
@@ -63,10 +69,15 @@ const initials = (name) => String(name || "R").trim().slice(0, 1).toUpperCase();
             <span>{{ recipe.commentCount }}</span>
           </button>
         </div>
-        <button type="button" :aria-pressed="recipe.saved" class="social-action focus-ring" :class="recipe.saved && 'social-action--saved'" aria-label="Guardar receta" @click="$emit('save', recipe)">
-          <PhBookmarkSimple :size="22" :weight="recipe.saved ? 'fill' : 'regular'" aria-hidden="true" />
-          <span class="hidden sm:inline">{{ recipe.saved ? "Guardada" : "Guardar" }}</span>
-        </button>
+        <div class="flex items-center gap-2">
+          <button v-if="canDelete" type="button" class="social-action focus-ring hover:!bg-blush" aria-label="Eliminar receta" @click="$emit('delete', recipe)">
+            <PhTrash :size="21" aria-hidden="true" /><span class="hidden sm:inline">Eliminar</span>
+          </button>
+          <button type="button" :aria-pressed="recipe.saved" class="social-action focus-ring" :class="recipe.saved && 'social-action--saved'" aria-label="Guardar receta" @click="$emit('save', recipe)">
+            <PhBookmarkSimple :size="22" :weight="recipe.saved ? 'fill' : 'regular'" aria-hidden="true" />
+            <span class="hidden sm:inline">{{ recipe.saved ? "Guardada" : "Guardar" }}</span>
+          </button>
+        </div>
       </div>
     </div>
   </article>

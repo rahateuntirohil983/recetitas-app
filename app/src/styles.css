@@ -182,6 +182,18 @@ select:focus-visible {
   border-color: #6f7451;
 }
 
+.field-input--error,
+.field-input--error:focus {
+  border-color: #b65f69;
+  background: #fff5f5;
+}
+
+.field-error {
+  color: #8d3945;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
 .mobile-nav {
   display: grid;
   min-height: 3.5rem;

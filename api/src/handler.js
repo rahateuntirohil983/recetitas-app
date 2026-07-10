@@ -273,6 +273,7 @@ const recipeDto = (row) => ({
     handle: row.handle,
     displayName: row.display_name,
     avatarUrl: row.avatar_url || null,
+    followed: Boolean(row.author_followed),
   },
 });
 
@@ -373,8 +374,8 @@ const getFeed = async (db, viewerId = "", limit = 20, authorId = null) => {
   const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 40);
   const where = authorId ? "WHERE r.author_id = ?" : "";
   const bindings = authorId
-    ? [viewerId, viewerId, authorId, safeLimit]
-    : [viewerId, viewerId, safeLimit];
+    ? [viewerId, viewerId, viewerId, authorId, safeLimit]
+    : [viewerId, viewerId, viewerId, safeLimit];
   const result = await db.prepare(`SELECT
       r.*,
       u.handle,
@@ -383,7 +384,8 @@ const getFeed = async (db, viewerId = "", limit = 20, authorId = null) => {
       (SELECT COUNT(*) FROM likes l WHERE l.recipe_id = r.id) AS like_count,
       (SELECT COUNT(*) FROM comments c WHERE c.recipe_id = r.id) AS comment_count,
       EXISTS(SELECT 1 FROM likes ml WHERE ml.recipe_id = r.id AND ml.user_id = ?) AS liked_by_me,
-      EXISTS(SELECT 1 FROM bookmarks mb WHERE mb.recipe_id = r.id AND mb.user_id = ?) AS saved_by_me
+      EXISTS(SELECT 1 FROM bookmarks mb WHERE mb.recipe_id = r.id AND mb.user_id = ?) AS saved_by_me,
+      EXISTS(SELECT 1 FROM follows af WHERE af.follower_id = ? AND af.followed_id = r.author_id) AS author_followed
     FROM recipes r
     JOIN users u ON u.id = r.author_id
     ${where}
@@ -404,11 +406,12 @@ const getRecipe = async (db, recipeId, viewerId = "") => {
       (SELECT COUNT(*) FROM likes l WHERE l.recipe_id = r.id) AS like_count,
       (SELECT COUNT(*) FROM comments c WHERE c.recipe_id = r.id) AS comment_count,
       EXISTS(SELECT 1 FROM likes ml WHERE ml.recipe_id = r.id AND ml.user_id = ?) AS liked_by_me,
-      EXISTS(SELECT 1 FROM bookmarks mb WHERE mb.recipe_id = r.id AND mb.user_id = ?) AS saved_by_me
+      EXISTS(SELECT 1 FROM bookmarks mb WHERE mb.recipe_id = r.id AND mb.user_id = ?) AS saved_by_me,
+      EXISTS(SELECT 1 FROM follows af WHERE af.follower_id = ? AND af.followed_id = r.author_id) AS author_followed
     FROM recipes r
     JOIN users u ON u.id = r.author_id
     WHERE r.id = ?`)
-    .bind(viewerId, viewerId, recipeId)
+    .bind(viewerId, viewerId, viewerId, recipeId)
     .first();
   return row ? recipeDto(row) : null;
 };
@@ -442,9 +445,10 @@ const validateRecipe = (body) => {
   const rawImageUrl = cleanText(body.imageUrl, 500);
   const imageUrl = rawImageUrl && /^https:\/\//i.test(rawImageUrl) ? rawImageUrl : null;
 
-  if (title.length < 3 || summary.length < 10 || ingredients.length === 0 || steps.length === 0) {
-    return { error: "Completá título, descripción, ingredientes y pasos." };
-  }
+  if (title.length < 3) return { error: "El nombre de la receta debe tener al menos 3 caracteres." };
+  if (summary.length < 10) return { error: "La historia corta debe tener al menos 10 caracteres." };
+  if (ingredients.length === 0) return { error: "Agregá al menos un ingrediente." };
+  if (steps.length === 0) return { error: "Agregá al menos un paso." };
   if (!Number.isInteger(cookMinutes) || cookMinutes < 1 || cookMinutes > 1440) {
     return { error: "El tiempo de cocción no es válido." };
   }
@@ -577,13 +581,14 @@ export async function handleApiRequest(request, env) {
           (SELECT COUNT(*) FROM likes l WHERE l.recipe_id = r.id) AS like_count,
           (SELECT COUNT(*) FROM comments c WHERE c.recipe_id = r.id) AS comment_count,
           EXISTS(SELECT 1 FROM likes ml WHERE ml.recipe_id = r.id AND ml.user_id = ?) AS liked_by_me,
+          EXISTS(SELECT 1 FROM follows af WHERE af.follower_id = ? AND af.followed_id = r.author_id) AS author_followed,
           1 AS saved_by_me
         FROM bookmarks b
         JOIN recipes r ON r.id = b.recipe_id
         JOIN users u ON u.id = r.author_id
         WHERE b.user_id = ?
         ORDER BY b.created_at DESC`)
-        .bind(auth.user.id, auth.user.id)
+        .bind(auth.user.id, auth.user.id, auth.user.id)
         .all();
       return json({ items: (result.results || []).map(recipeDto) });
     }
@@ -703,12 +708,31 @@ export async function handleApiRequest(request, env) {
       }
     }
 
+    const connectionsMatch = path.match(/^\/api\/profiles\/([a-z0-9_]{3,24})\/(followers|following)$/);
+    if (request.method === "GET" && connectionsMatch) {
+      const [, handle, connectionType] = connectionsMatch;
+      const owner = await env.DB.prepare("SELECT id FROM users WHERE handle = ?").bind(handle).first();
+      if (!owner) return error(404, "PROFILE_NOT_FOUND", "No encontramos ese perfil.");
+
+      const sql = connectionType === "followers"
+        ? `SELECT u.* FROM follows f JOIN users u ON u.id = f.follower_id
+          WHERE f.followed_id = ? ORDER BY f.created_at DESC LIMIT 100`
+        : `SELECT u.* FROM follows f JOIN users u ON u.id = f.followed_id
+          WHERE f.follower_id = ? ORDER BY f.created_at DESC LIMIT 100`;
+      const result = await env.DB.prepare(sql).bind(owner.id).all();
+      return json({
+        type: connectionType,
+        people: (result.results || []).map((row) => userDto(row, { includeEmail: false })),
+      });
+    }
+
     const profileMatch = path.match(/^\/api\/profiles\/([a-z0-9_]{3,24})$/);
     if (request.method === "GET" && profileMatch) {
       const profile = await env.DB.prepare(`SELECT
           u.*,
           (SELECT COUNT(*) FROM recipes r WHERE r.author_id = u.id) AS recipe_count,
           (SELECT COUNT(*) FROM follows f WHERE f.followed_id = u.id) AS follower_count,
+          (SELECT COUNT(*) FROM follows f WHERE f.follower_id = u.id) AS following_count,
           EXISTS(SELECT 1 FROM follows mf WHERE mf.followed_id = u.id AND mf.follower_id = ?) AS followed_by_me
         FROM users u
         WHERE u.handle = ?`)
@@ -720,7 +744,9 @@ export async function handleApiRequest(request, env) {
           ...userDto(profile, { includeEmail: false }),
           recipeCount: Number(profile.recipe_count || 0),
           followerCount: Number(profile.follower_count || 0),
+          followingCount: Number(profile.following_count || 0),
           followed: Boolean(profile.followed_by_me),
+          isOwnProfile: profile.id === viewer?.id,
         },
         recipes: await getFeed(env.DB, viewer?.id || "", 20, profile.id),
       });

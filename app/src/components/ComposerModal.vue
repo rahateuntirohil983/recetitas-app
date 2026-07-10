@@ -1,11 +1,16 @@
 <script setup>
-import { reactive, ref } from "vue";
+import { nextTick, reactive, ref, watch } from "vue";
 import { PhArrowRight, PhX } from "@phosphor-icons/vue";
 
 defineProps({ open: { type: Boolean, default: false }, busy: { type: Boolean, default: false } });
 const emit = defineEmits(["close", "submit"]);
 
 const error = ref("");
+const titleInput = ref(null);
+const summaryInput = ref(null);
+const ingredientsInput = ref(null);
+const stepsInput = ref(null);
+const fieldErrors = reactive({ title: "", summary: "", cookMinutes: "", servings: "", ingredients: "", steps: "" });
 const form = reactive({
   title: "",
   summary: "",
@@ -16,11 +21,46 @@ const form = reactive({
   steps: "",
 });
 
-const submit = () => {
+[
+  ["title", () => form.title],
+  ["summary", () => form.summary],
+  ["cookMinutes", () => form.cookMinutes],
+  ["servings", () => form.servings],
+  ["ingredients", () => form.ingredients],
+  ["steps", () => form.steps],
+].forEach(([field, source]) => {
+  watch(source, () => {
+    fieldErrors[field] = "";
+    error.value = "";
+  });
+});
+
+const submit = async () => {
   const ingredients = form.ingredients.split("\n").map((value) => value.trim()).filter(Boolean);
   const steps = form.steps.split("\n").map((value) => value.trim()).filter(Boolean);
-  if (form.title.trim().length < 3 || form.summary.trim().length < 10 || !ingredients.length || !steps.length) {
-    error.value = "Completá el título, la historia, los ingredientes y los pasos.";
+  const titleLength = form.title.trim().length;
+  const summaryLength = form.summary.trim().length;
+
+  Object.assign(fieldErrors, {
+    title: titleLength < 3 ? `Faltan ${3 - titleLength} caracteres.` : "",
+    summary: summaryLength < 10 ? `Faltan ${10 - summaryLength} caracteres para contar la historia.` : "",
+    cookMinutes: !Number.isInteger(form.cookMinutes) || form.cookMinutes < 1 || form.cookMinutes > 1440 ? "Ingresá entre 1 y 1440 minutos." : "",
+    servings: !Number.isInteger(form.servings) || form.servings < 1 || form.servings > 24 ? "Ingresá entre 1 y 24 porciones." : "",
+    ingredients: !ingredients.length ? "Agregá al menos un ingrediente." : "",
+    steps: !steps.length ? "Agregá al menos un paso." : "",
+  });
+
+  const firstInvalid = [
+    ["title", titleInput],
+    ["summary", summaryInput],
+    ["ingredients", ingredientsInput],
+    ["steps", stepsInput],
+  ].find(([field]) => fieldErrors[field]);
+
+  if (Object.values(fieldErrors).some(Boolean)) {
+    error.value = "Revisá los campos marcados antes de publicar.";
+    await nextTick();
+    firstInvalid?.[1]?.value?.focus();
     return;
   }
   error.value = "";
@@ -40,18 +80,20 @@ const submit = () => {
           Nueva receta.
         </h2>
 
-        <form class="mt-8 grid gap-5" @submit.prevent="submit">
+        <form class="mt-8 grid gap-5" novalidate @submit.prevent="submit">
           <label class="field-label">
             Nombre de la receta
-            <input v-model="form.title" class="field-input" maxlength="90" required placeholder="Tarta de tomates asados" />
+            <input ref="titleInput" v-model="form.title" class="field-input" :class="fieldErrors.title && 'field-input--error'" :aria-invalid="Boolean(fieldErrors.title)" maxlength="90" required placeholder="Tarta de tomates asados" />
+            <span v-if="fieldErrors.title" class="field-error">{{ fieldErrors.title }}</span>
           </label>
           <label class="field-label">
-            La historia corta
-            <textarea v-model="form.summary" class="field-input min-h-24 resize-y" maxlength="280" required placeholder="Qué la hace especial, cuándo la cocinás…" />
+            <span class="flex items-center justify-between gap-3"><span>La historia corta</span><small class="font-medium" :class="form.summary.trim().length < 10 ? 'text-charcoal/55' : 'text-olive-dark'">{{ form.summary.trim().length }}/10 mínimo</small></span>
+            <textarea ref="summaryInput" v-model="form.summary" class="field-input min-h-24 resize-y" :class="fieldErrors.summary && 'field-input--error'" :aria-invalid="Boolean(fieldErrors.summary)" maxlength="280" required placeholder="Qué la hace especial, cuándo la cocinás…" />
+            <span v-if="fieldErrors.summary" class="field-error">{{ fieldErrors.summary }}</span>
           </label>
           <div class="grid gap-5 sm:grid-cols-3">
-            <label class="field-label">Minutos<input v-model.number="form.cookMinutes" type="number" min="1" max="1440" class="field-input" /></label>
-            <label class="field-label">Porciones<input v-model.number="form.servings" type="number" min="1" max="24" class="field-input" /></label>
+            <label class="field-label">Minutos<input v-model.number="form.cookMinutes" type="number" min="1" max="1440" class="field-input" :class="fieldErrors.cookMinutes && 'field-input--error'" /><span v-if="fieldErrors.cookMinutes" class="field-error">{{ fieldErrors.cookMinutes }}</span></label>
+            <label class="field-label">Porciones<input v-model.number="form.servings" type="number" min="1" max="24" class="field-input" :class="fieldErrors.servings && 'field-input--error'" /><span v-if="fieldErrors.servings" class="field-error">{{ fieldErrors.servings }}</span></label>
             <label class="field-label">Imagen
               <select v-model="form.imageKey" class="field-input">
                 <option value="pumpkin">Plato terminado</option>
@@ -61,8 +103,8 @@ const submit = () => {
             </label>
           </div>
           <div class="grid gap-5 sm:grid-cols-2">
-            <label class="field-label">Ingredientes, uno por línea<textarea v-model="form.ingredients" class="field-input min-h-40 resize-y" required placeholder="4 tomates\n2 dientes de ajo\nAceite de oliva" /></label>
-            <label class="field-label">Pasos, uno por línea<textarea v-model="form.steps" class="field-input min-h-40 resize-y" required placeholder="Asá los tomates.\nPrepará la masa.\nHorneá hasta dorar." /></label>
+            <label class="field-label">Ingredientes, uno por línea<textarea ref="ingredientsInput" v-model="form.ingredients" class="field-input min-h-40 resize-y" :class="fieldErrors.ingredients && 'field-input--error'" required placeholder="4 tomates\n2 dientes de ajo\nAceite de oliva" /><span v-if="fieldErrors.ingredients" class="field-error">{{ fieldErrors.ingredients }}</span></label>
+            <label class="field-label">Pasos, uno por línea<textarea ref="stepsInput" v-model="form.steps" class="field-input min-h-40 resize-y" :class="fieldErrors.steps && 'field-input--error'" required placeholder="Asá los tomates.\nPrepará la masa.\nHorneá hasta dorar." /><span v-if="fieldErrors.steps" class="field-error">{{ fieldErrors.steps }}</span></label>
           </div>
 
           <p v-if="error" class="bg-blush px-4 py-3 text-sm font-semibold text-charcoal" role="alert">{{ error }}</p>

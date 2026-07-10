@@ -82,3 +82,15 @@ test("normalizes and validates a complete recipe", () => {
   assert.equal(recipe.cookMinutes, 45);
   assert.equal(recipe.error, undefined);
 });
+
+test("explains when the recipe story is too short", () => {
+  const recipe = __test.validateRecipe({
+    title: "Pan casero",
+    summary: "Muy rico",
+    cookMinutes: 40,
+    servings: 4,
+    ingredients: ["Harina"],
+    steps: ["Amasar"],
+  });
+  assert.match(recipe.error, /historia corta.*10 caracteres/i);
+});

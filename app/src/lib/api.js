@@ -5,6 +5,7 @@ let demoAuthenticated = false;
 let demoCurrentUser = structuredClone(demoUser);
 let recipes = structuredClone(demoRecipes);
 let comments = structuredClone(demoComments);
+const followedUsers = new Set();
 
 const pause = (duration = 180) => new Promise((resolve) => setTimeout(resolve, duration));
 
@@ -80,6 +81,50 @@ export const api = {
     return { items: recipes.filter((recipe) => recipe.saved) };
   },
 
+  async profile(handle) {
+    if (!useDemo) return request(`/api/profiles/${encodeURIComponent(handle)}`);
+    await pause();
+    const authored = recipes.filter((recipe) => recipe.author.handle === handle);
+    const person = handle === demoCurrentUser.handle ? demoCurrentUser : authored[0]?.author;
+    if (!person) throw Object.assign(new Error("No encontramos ese perfil."), { status: 404 });
+    return {
+      profile: {
+        ...person,
+        bio: person.bio || "",
+        recipeCount: authored.length,
+        followerCount: followedUsers.has(person.id) ? 1 : 0,
+        followingCount: 0,
+        followed: followedUsers.has(person.id),
+        isOwnProfile: person.id === demoCurrentUser.id && demoAuthenticated,
+      },
+      recipes: authored,
+    };
+  },
+
+  async updateProfile(payload) {
+    if (!useDemo) return request("/api/profile", { method: "PATCH", body: JSON.stringify(payload) });
+    demoCurrentUser = { ...demoCurrentUser, ...payload };
+    recipes = recipes.map((recipe) => recipe.author.id === demoCurrentUser.id
+      ? { ...recipe, author: demoCurrentUser }
+      : recipe);
+    await pause(220);
+    return { user: demoCurrentUser };
+  },
+
+  async toggleFollow(userId) {
+    if (!useDemo) return request(`/api/users/${userId}/follow`, { method: "POST", body: "{}" });
+    if (!demoAuthenticated) throw Object.assign(new Error("Iniciá sesión para seguir personas."), { status: 401 });
+    followedUsers.has(userId) ? followedUsers.delete(userId) : followedUsers.add(userId);
+    await pause(120);
+    return { active: followedUsers.has(userId) };
+  },
+
+  async connections(handle, type) {
+    if (!useDemo) return request(`/api/profiles/${encodeURIComponent(handle)}/${type}`);
+    await pause();
+    return { type, people: [] };
+  },
+
   async createRecipe(payload) {
     if (!useDemo) return request("/api/recipes", { method: "POST", body: JSON.stringify(payload) });
     if (!demoAuthenticated) throw Object.assign(new Error("Iniciá sesión para publicar."), { status: 401 });
@@ -134,12 +179,20 @@ export const api = {
       id: `comment_${crypto.randomUUID()}`,
       body,
       createdAt: new Date().toISOString(),
-      author: demoUser,
+      author: demoCurrentUser,
     };
     comments[recipeId] = [...(comments[recipeId] || []), comment];
     const recipe = findRecipe(recipeId);
     recipe.commentCount += 1;
     await pause(180);
     return { id: comment.id };
+  },
+
+  async deleteRecipe(recipeId) {
+    if (!useDemo) return request(`/api/recipes/${recipeId}`, { method: "DELETE" });
+    recipes = recipes.filter((recipe) => recipe.id !== recipeId);
+    delete comments[recipeId];
+    await pause(160);
+    return null;
   },
 };

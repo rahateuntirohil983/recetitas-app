@@ -12,7 +12,10 @@ import {
 import AppBrand from "./components/AppBrand.vue";
 import CommentsPanel from "./components/CommentsPanel.vue";
 import ComposerModal from "./components/ComposerModal.vue";
+import ConnectionsPanel from "./components/ConnectionsPanel.vue";
+import EditProfileModal from "./components/EditProfileModal.vue";
 import LoginPanel from "./components/LoginPanel.vue";
+import ProfileView from "./components/ProfileView.vue";
 import RecipeCard from "./components/RecipeCard.vue";
 import { api } from "./lib/api.js";
 
@@ -29,6 +32,15 @@ const comments = ref([]);
 const busy = ref(false);
 const toast = ref("");
 const authError = ref("");
+const profile = ref(null);
+const profileRecipes = ref([]);
+const profileLoading = ref(false);
+const editProfileOpen = ref(false);
+const editProfileError = ref("");
+const connectionsOpen = ref(false);
+const connectionsType = ref("followers");
+const connectionsPeople = ref([]);
+const connectionsLoading = ref(false);
 
 watch(loginOpen, (open) => {
   if (open) authError.value = "";
@@ -51,9 +63,11 @@ const flash = (message) => {
   window.setTimeout(() => { if (toast.value === message) toast.value = ""; }, 2800);
 };
 
-const loadView = async (view = activeView.value) => {
+const loadView = async (view = activeView.value, updateUrl = true) => {
   loading.value = true;
   activeView.value = view;
+  profile.value = null;
+  if (updateUrl) window.history.pushState({}, "", view === "saved" ? "/app/?view=saved" : "/app/");
   try {
     const response = view === "saved" ? await api.saved() : await api.feed();
     recipes.value = response.items;
@@ -80,6 +94,7 @@ const authenticate = async ({ mode, payload }) => {
   try {
     session.value = mode === "register" ? await api.register(payload) : await api.login(payload);
     loginOpen.value = false;
+    if (activeView.value === "profile" && profile.value) await openProfile(profile.value.handle, false);
     flash(mode === "register" ? "Tu recetario ya está listo." : "Qué bueno verte de nuevo.");
   } catch (failure) {
     authError.value = failure.message;
@@ -91,13 +106,130 @@ const authenticate = async ({ mode, payload }) => {
 const logout = async () => {
   session.value = await api.logout();
   flash("Cerraste sesión.");
-  if (activeView.value === "saved") await loadView("feed");
+  if (["saved", "profile"].includes(activeView.value)) await loadView("feed");
 };
 
 const replaceRecipe = (nextRecipe) => {
   const index = recipes.value.findIndex((recipe) => recipe.id === nextRecipe.id);
   if (index >= 0) recipes.value[index] = nextRecipe;
+  const profileIndex = profileRecipes.value.findIndex((recipe) => recipe.id === nextRecipe.id);
+  if (profileIndex >= 0) profileRecipes.value[profileIndex] = nextRecipe;
   if (selectedRecipe.value?.id === nextRecipe.id) selectedRecipe.value = nextRecipe;
+};
+
+const openProfile = async (handle, updateUrl = true) => {
+  if (!handle) return;
+  activeView.value = "profile";
+  profileLoading.value = true;
+  connectionsOpen.value = false;
+  if (updateUrl) window.history.pushState({}, "", `/app/u/${encodeURIComponent(handle)}`);
+  try {
+    const response = await api.profile(handle);
+    profile.value = response.profile;
+    profileRecipes.value = response.recipes;
+  } catch (failure) {
+    flash(failure.message);
+    await loadView("feed");
+  } finally {
+    profileLoading.value = false;
+  }
+};
+
+const openOwnProfile = () => {
+  if (!session.value.authenticated) {
+    loginOpen.value = true;
+    return;
+  }
+  openProfile(session.value.user.handle);
+};
+
+const toggleFollow = async (person) => {
+  if (!session.value.authenticated) {
+    loginOpen.value = true;
+    return;
+  }
+  if (person.id === session.value.user.id) {
+    openOwnProfile();
+    return;
+  }
+  busy.value = true;
+  try {
+    const wasFollowing = Boolean(person.followed);
+    const response = await api.toggleFollow(person.id);
+    const updateAuthor = (recipe) => recipe.author.id === person.id
+      ? { ...recipe, author: { ...recipe.author, followed: response.active } }
+      : recipe;
+    recipes.value = recipes.value.map(updateAuthor);
+    profileRecipes.value = profileRecipes.value.map(updateAuthor);
+    if (profile.value?.id === person.id) {
+      profile.value = {
+        ...profile.value,
+        followed: response.active,
+        followerCount: Math.max(0, profile.value.followerCount + (response.active && !wasFollowing ? 1 : !response.active && wasFollowing ? -1 : 0)),
+      };
+    }
+    flash(response.active ? `Ahora seguís a @${person.handle}.` : `Dejaste de seguir a @${person.handle}.`);
+  } catch (failure) {
+    if (failure.status === 401) loginOpen.value = true;
+    else flash(failure.message);
+  } finally {
+    busy.value = false;
+  }
+};
+
+const saveProfile = async (payload) => {
+  busy.value = true;
+  editProfileError.value = "";
+  try {
+    const response = await api.updateProfile(payload);
+    const previousId = session.value.user.id;
+    session.value = { ...session.value, user: response.user };
+    profile.value = { ...profile.value, ...response.user, isOwnProfile: true };
+    const updateAuthor = (recipe) => recipe.author.id === previousId
+      ? { ...recipe, author: { ...recipe.author, ...response.user } }
+      : recipe;
+    recipes.value = recipes.value.map(updateAuthor);
+    profileRecipes.value = profileRecipes.value.map(updateAuthor);
+    editProfileOpen.value = false;
+    window.history.replaceState({}, "", `/app/u/${encodeURIComponent(response.user.handle)}`);
+    flash("Tu perfil quedó actualizado.");
+  } catch (failure) {
+    editProfileError.value = failure.message;
+  } finally {
+    busy.value = false;
+  }
+};
+
+const openConnections = async (type) => {
+  if (!profile.value) return;
+  connectionsType.value = type;
+  connectionsPeople.value = [];
+  connectionsLoading.value = true;
+  connectionsOpen.value = true;
+  try {
+    connectionsPeople.value = (await api.connections(profile.value.handle, type)).people;
+  } catch (failure) {
+    flash(failure.message);
+    connectionsOpen.value = false;
+  } finally {
+    connectionsLoading.value = false;
+  }
+};
+
+const deleteRecipe = async (recipe) => {
+  if (!window.confirm(`¿Eliminar “${recipe.title}”? Esta acción no se puede deshacer.`)) return;
+  busy.value = true;
+  try {
+    await api.deleteRecipe(recipe.id);
+    recipes.value = recipes.value.filter((item) => item.id !== recipe.id);
+    profileRecipes.value = profileRecipes.value.filter((item) => item.id !== recipe.id);
+    if (profile.value) profile.value = { ...profile.value, recipeCount: Math.max(0, profile.value.recipeCount - 1) };
+    flash("La receta fue eliminada.");
+  } catch (failure) {
+    flash(failure.message);
+  } finally {
+    busy.value = false;
+  }
 };
 
 const actOnRecipe = async (recipe, action) => {
@@ -146,6 +278,7 @@ const publishRecipe = async (payload) => {
     recipes.value = [response.recipe, ...recipes.value];
     composerOpen.value = false;
     activeView.value = "feed";
+    window.history.pushState({}, "", "/app/");
     flash("Tu receta ya está en la mesa.");
   } catch (failure) {
     if (failure.status === 401) {
@@ -163,9 +296,17 @@ onMounted(async () => {
     session.value = await api.session();
     const params = new URLSearchParams(window.location.search);
     const requestedView = params.get("view") === "saved" ? "saved" : "feed";
-    await loadView(requestedView);
+    const profileRoute = window.location.pathname.match(/^\/app\/u\/([a-z0-9_]{3,24})\/?$/i);
+    if (profileRoute) await openProfile(profileRoute[1], false);
+    else await loadView(requestedView, false);
     if (["1", "register"].includes(params.get("login"))) loginOpen.value = true;
     if (params.get("compose") === "1") startPublishing();
+
+    window.addEventListener("popstate", () => {
+      const match = window.location.pathname.match(/^\/app\/u\/([a-z0-9_]{3,24})\/?$/i);
+      if (match) openProfile(match[1], false);
+      else loadView(new URLSearchParams(window.location.search).get("view") === "saved" ? "saved" : "feed", false);
+    });
   } catch (failure) {
     flash(failure.message);
     loading.value = false;
@@ -182,7 +323,7 @@ onMounted(async () => {
         <button type="button" class="side-nav" :class="activeView === 'feed' && 'side-nav--active'" @click="loadView('feed')"><PhHouse :size="22" /> Para vos</button>
         <button type="button" class="side-nav" @click="search = ''; activeView = 'feed'"><PhCompass :size="22" /> Descubrir</button>
         <button type="button" class="side-nav" :class="activeView === 'saved' && 'side-nav--active'" @click="loadView('saved')"><PhBookmarkSimple :size="22" /> Guardadas</button>
-        <button type="button" class="side-nav" @click="session.authenticated ? flash('El perfil completo llega en la próxima iteración.') : loginOpen = true"><PhUserCircle :size="22" /> Mi perfil</button>
+        <button type="button" class="side-nav" :class="activeView === 'profile' && profile?.isOwnProfile && 'side-nav--active'" @click="openOwnProfile"><PhUserCircle :size="22" /> Mi perfil</button>
       </nav>
 
       <button type="button" class="focus-ring mt-8 inline-flex min-h-13 items-center justify-between bg-blush px-5 font-semibold text-charcoal hover:bg-olive" @click="startPublishing">
@@ -205,7 +346,7 @@ onMounted(async () => {
     </header>
 
     <main class="lg:ml-[255px]">
-      <div class="mx-auto grid max-w-[1320px] lg:grid-cols-[minmax(0,760px)_320px] xl:gap-10">
+      <div v-if="activeView !== 'profile'" class="mx-auto grid max-w-[1320px] lg:grid-cols-[minmax(0,760px)_320px] xl:gap-10">
         <section class="min-w-0 px-4 pb-28 pt-7 sm:px-7 lg:pb-16 lg:pt-10">
           <header class="mb-7 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
             <div>
@@ -240,7 +381,7 @@ onMounted(async () => {
             </button>
           </div>
           <div v-else class="grid gap-7">
-            <RecipeCard v-for="recipe in filteredRecipes" :key="recipe.id" :recipe="recipe" @like="actOnRecipe($event, 'like')" @save="actOnRecipe($event, 'save')" @comments="openComments" />
+            <RecipeCard v-for="recipe in filteredRecipes" :key="recipe.id" :recipe="recipe" :viewer-id="session.user?.id || ''" @like="actOnRecipe($event, 'like')" @save="actOnRecipe($event, 'save')" @comments="openComments" @profile="openProfile" @follow="toggleFollow" />
           </div>
         </section>
 
@@ -270,13 +411,31 @@ onMounted(async () => {
           <a href="/" class="mt-7 block text-sm font-semibold text-charcoal/60 underline decoration-2 underline-offset-4 hover:text-charcoal">Volver a la landing</a>
         </aside>
       </div>
+
+      <ProfileView
+        v-else
+        :profile="profile"
+        :recipes="profileRecipes"
+        :viewer-id="session.user?.id || ''"
+        :loading="profileLoading"
+        :busy="busy"
+        @back="loadView('feed')"
+        @edit="editProfileOpen = true"
+        @follow="toggleFollow"
+        @connections="openConnections"
+        @like="actOnRecipe($event, 'like')"
+        @save="actOnRecipe($event, 'save')"
+        @comments="openComments"
+        @profile="openProfile"
+        @delete="deleteRecipe"
+      />
     </main>
 
     <nav class="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t-2 border-charcoal bg-porcelain px-2 py-2 lg:hidden" aria-label="Navegación móvil">
       <button type="button" class="mobile-nav" :class="activeView === 'feed' && 'mobile-nav--active'" @click="loadView('feed')"><PhHouse :size="22" /><span>Inicio</span></button>
       <button type="button" class="mobile-nav" @click="search = ''; activeView = 'feed'"><PhCompass :size="22" /><span>Descubrir</span></button>
       <button type="button" class="mobile-nav" :class="activeView === 'saved' && 'mobile-nav--active'" @click="loadView('saved')"><PhBookmarkSimple :size="22" /><span>Guardadas</span></button>
-      <button type="button" class="mobile-nav" @click="session.authenticated ? flash('El perfil completo llega en la próxima iteración.') : loginOpen = true"><PhUserCircle :size="22" /><span>Perfil</span></button>
+      <button type="button" class="mobile-nav" :class="activeView === 'profile' && profile?.isOwnProfile && 'mobile-nav--active'" @click="openOwnProfile"><PhUserCircle :size="22" /><span>Perfil</span></button>
     </nav>
 
     <p v-if="toast" class="fixed bottom-24 left-1/2 z-[70] -translate-x-1/2 bg-charcoal px-5 py-3 text-center text-sm font-semibold text-porcelain shadow-xl lg:bottom-8" role="status" aria-live="polite">{{ toast }}</p>
@@ -284,5 +443,7 @@ onMounted(async () => {
     <LoginPanel :open="loginOpen" :busy="busy" :error-message="authError" @close="loginOpen = false" @submit="authenticate" />
     <ComposerModal :open="composerOpen" :busy="busy" @close="composerOpen = false" @submit="publishRecipe" />
     <CommentsPanel :open="commentsOpen" :recipe="selectedRecipe" :comments="comments" :authenticated="session.authenticated" :busy="busy" @close="commentsOpen = false" @login="loginOpen = true" @submit="addComment" />
+    <EditProfileModal :open="editProfileOpen" :profile="profile" :busy="busy" :error-message="editProfileError" @close="editProfileOpen = false" @submit="saveProfile" />
+    <ConnectionsPanel :open="connectionsOpen" :type="connectionsType" :people="connectionsPeople" :loading="connectionsLoading" @close="connectionsOpen = false" @profile="connectionsOpen = false; openProfile($event)" />
   </div>
 </template>
