@@ -27,12 +27,14 @@
 
 html {
   background: #f9f5f3;
+  overflow-x: hidden;
 }
 
 body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  overflow-x: hidden;
   background: #f9f5f3;
 }
 
@@ -86,7 +88,7 @@ select:focus-visible {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 210%;
+  width: 185%;
   max-width: none;
   height: auto;
   transform: translate(-50%, -50%);
@@ -95,8 +97,12 @@ select:focus-visible {
 }
 
 .brand-logo--compact {
-  width: 42px;
-  height: 48px;
+  width: 48px;
+  height: 56px;
+}
+
+.brand-logo--compact img {
+  width: 168%;
 }
 
 .side-nav {

@@ -5,6 +5,7 @@ import {
   PhClock,
   PhCookingPot,
   PhHeart,
+  PhArrowRight,
   PhTrash,
   PhUsers,
 } from "@phosphor-icons/vue";
@@ -16,12 +17,20 @@ defineProps({
   showFollow: { type: Boolean, default: true },
   canDelete: { type: Boolean, default: false },
 });
-defineEmits(["like", "save", "comments", "profile", "follow", "delete"]);
+const emit = defineEmits(["open", "like", "save", "comments", "profile", "follow", "delete"]);
+
+const openCard = (event, recipe) => {
+  if (event.target !== event.currentTarget && event.target.closest("button, a, input, textarea, select")) return;
+  emit("open", recipe);
+};
 
 </script>
 
 <template>
-  <article class="recipe-card overflow-hidden border-2 border-charcoal bg-porcelain">
+  <article
+    class="recipe-card cursor-pointer overflow-hidden border-2 border-charcoal bg-porcelain"
+    @click="openCard($event, recipe)"
+  >
     <header class="flex items-center justify-between gap-4 px-5 py-4 sm:px-6">
       <button type="button" class="focus-ring flex min-w-0 items-center gap-3 text-left" @click="$emit('profile', recipe.author.handle)">
         <PigAvatar :index="recipe.author.avatarIndex" :size="44" :label="`Avatar de ${recipe.author.displayName}`" class="ring-2 ring-charcoal/15" />
@@ -40,17 +49,22 @@ defineEmits(["like", "save", "comments", "profile", "follow", "delete"]);
       <div v-else class="grid h-full place-items-center bg-olive/45 text-center text-charcoal" role="img" :aria-label="`${recipe.title}, sin foto`">
         <div><PhCookingPot :size="72" weight="thin" class="mx-auto" aria-hidden="true" /><p class="mt-3 font-display text-2xl font-bold">Receta sin foto.</p></div>
       </div>
-      <figcaption class="absolute bottom-4 left-4 flex gap-2">
-        <span class="inline-flex items-center gap-1.5 bg-porcelain px-3 py-2 text-sm font-semibold text-charcoal">
-          <PhClock :size="17" aria-hidden="true" /> {{ recipe.cookMinutes }} min
-        </span>
-        <span class="inline-flex items-center gap-1.5 bg-olive px-3 py-2 text-sm font-semibold text-charcoal">
-          <PhUsers :size="17" aria-hidden="true" /> {{ recipe.servings }}
-        </span>
-      </figcaption>
     </figure>
 
     <div class="px-5 py-5 sm:px-6 sm:py-6">
+      <div class="mb-4 flex items-center justify-between gap-3">
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="inline-flex items-center gap-1.5 bg-cream px-3 py-2 text-sm font-semibold text-charcoal">
+            <PhClock :size="17" aria-hidden="true" /> {{ recipe.cookMinutes }} min
+          </span>
+          <span class="inline-flex items-center gap-1.5 bg-olive px-3 py-2 text-sm font-semibold text-charcoal">
+            <PhUsers :size="17" aria-hidden="true" /> {{ recipe.servings }}
+          </span>
+        </div>
+        <button type="button" class="focus-ring inline-flex min-h-10 shrink-0 items-center gap-1 px-2 text-sm font-bold text-olive-dark hover:bg-cream" :aria-label="`Abrir la receta ${recipe.title}`" @click="$emit('open', recipe)">
+          <span class="hidden sm:inline">Ver receta</span><PhArrowRight :size="19" aria-hidden="true" />
+        </button>
+      </div>
       <h2 class="font-display text-[clamp(2rem,5vw,3.35rem)] font-bold leading-[1.02] tracking-[-0.05em] text-charcoal">
         {{ recipe.title }}
       </h2>

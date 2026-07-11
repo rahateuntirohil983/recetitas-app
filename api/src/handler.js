@@ -451,6 +451,8 @@ const toggleRelation = async (db, table, userId, recipeId) => {
   return true;
 };
 
+const canDeleteOwnedComment = (comment, user) => Boolean(comment && user && comment.author_id === user.id);
+
 const validateRecipe = (body, mediaBaseUrl = "") => {
   const title = cleanText(body.title, 90);
   const summary = cleanText(body.summary, 280);
@@ -720,6 +722,22 @@ export async function handleApiRequest(request, env) {
       return json({ recipe: await getRecipe(env.DB, recipeId, auth.user.id) }, 201);
     }
 
+    const commentMatch = path.match(/^\/api\/recipes\/([^/]+)\/comments\/([^/]+)$/);
+    if (request.method === "DELETE" && commentMatch) {
+      const auth = await requireUser(request, env.DB);
+      if (auth.response) return auth.response;
+      const [, recipeId, commentId] = commentMatch;
+      const comment = await env.DB.prepare("SELECT id, recipe_id, author_id FROM comments WHERE id = ? AND recipe_id = ?")
+        .bind(commentId, recipeId)
+        .first();
+      if (!comment) return error(404, "COMMENT_NOT_FOUND", "No encontramos ese comentario.");
+      if (!canDeleteOwnedComment(comment, auth.user)) return error(403, "NOT_OWNER", "Solo podés borrar tus comentarios.");
+      await env.DB.prepare("DELETE FROM comments WHERE id = ? AND recipe_id = ? AND author_id = ?")
+        .bind(commentId, recipeId, auth.user.id)
+        .run();
+      return new Response(null, { status: 204 });
+    }
+
     const recipeMatch = path.match(/^\/api\/recipes\/([^/]+)(?:\/(like|save|comments))?$/);
     if (recipeMatch) {
       const [, recipeId, action] = recipeMatch;
@@ -870,6 +888,7 @@ export async function handleApiRequest(request, env) {
 }
 
 export const __test = {
+  canDeleteOwnedComment,
   cleanText,
   cleanLines,
   hashPassword,

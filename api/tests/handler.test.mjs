@@ -115,3 +115,10 @@ test("keeps pig avatar assignment stable and within the 64-image atlas", () => {
   assert.equal(first, second);
   assert.ok(first >= 0 && first < 64);
 });
+
+test("only lets a comment author delete their own comment", () => {
+  const comment = { id: "comment-1", author_id: "user-1" };
+  assert.equal(__test.canDeleteOwnedComment(comment, { id: "user-1" }), true);
+  assert.equal(__test.canDeleteOwnedComment(comment, { id: "user-2" }), false);
+  assert.equal(__test.canDeleteOwnedComment(null, { id: "user-1" }), false);
+});

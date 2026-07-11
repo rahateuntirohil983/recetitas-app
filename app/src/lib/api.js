@@ -145,6 +145,14 @@ export const api = {
     return { recipe };
   },
 
+  async recipe(recipeId) {
+    if (!useDemo) return request(`/api/recipes/${encodeURIComponent(recipeId)}`);
+    await pause();
+    const recipe = findRecipe(recipeId);
+    if (!recipe) throw Object.assign(new Error("No encontramos esa receta."), { status: 404 });
+    return { recipe };
+  },
+
   async uploadImage(file) {
     if (!useDemo) return request("/api/uploads", {
       method: "POST",
@@ -193,10 +201,19 @@ export const api = {
       author: demoCurrentUser,
     };
     comments[recipeId] = [...(comments[recipeId] || []), comment];
-    const recipe = findRecipe(recipeId);
-    recipe.commentCount += 1;
     await pause(180);
     return { id: comment.id };
+  },
+
+  async deleteComment(recipeId, commentId) {
+    if (!useDemo) return request(`/api/recipes/${encodeURIComponent(recipeId)}/comments/${encodeURIComponent(commentId)}`, { method: "DELETE" });
+    if (!demoAuthenticated) throw Object.assign(new Error("Iniciá sesión para eliminar comentarios."), { status: 401 });
+    const existing = (comments[recipeId] || []).find((comment) => comment.id === commentId);
+    if (!existing) throw Object.assign(new Error("No encontramos ese comentario."), { status: 404 });
+    if (existing.author.id !== demoCurrentUser.id) throw Object.assign(new Error("Solo podés borrar tus comentarios."), { status: 403 });
+    comments[recipeId] = (comments[recipeId] || []).filter((comment) => comment.id !== commentId);
+    await pause(140);
+    return null;
   },
 
   async deleteRecipe(recipeId) {

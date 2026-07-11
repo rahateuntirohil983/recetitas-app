@@ -11,7 +11,7 @@ defineProps({
   busy: { type: Boolean, default: false },
 });
 
-defineEmits(["back", "edit", "follow", "connections", "like", "save", "comments", "profile", "delete"]);
+defineEmits(["back", "edit", "follow", "connections", "open", "like", "save", "comments", "profile", "delete"]);
 </script>
 
 <template>
@@ -77,6 +77,7 @@ defineEmits(["back", "edit", "follow", "connections", "like", "save", "comments"
           :viewer-id="viewerId"
           :show-follow="false"
           :can-delete="profile.isOwnProfile"
+          @open="$emit('open', $event)"
           @like="$emit('like', $event)"
           @save="$emit('save', $event)"
           @comments="$emit('comments', $event)"

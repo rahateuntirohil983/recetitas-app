@@ -1,6 +1,6 @@
 <script setup>
 import { ref, watch } from "vue";
-import { PhArrowUp, PhX } from "@phosphor-icons/vue";
+import { PhArrowUp, PhTrash, PhX } from "@phosphor-icons/vue";
 import PigAvatar from "./PigAvatar.vue";
 
 const props = defineProps({
@@ -8,10 +8,11 @@ const props = defineProps({
   recipe: { type: Object, default: null },
   comments: { type: Array, default: () => [] },
   authenticated: { type: Boolean, default: false },
+  viewerId: { type: String, default: "" },
   busy: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(["close", "submit", "login"]);
+const emit = defineEmits(["close", "submit", "login", "delete"]);
 const body = ref("");
 
 watch(() => props.recipe?.id, () => { body.value = ""; });
@@ -44,7 +45,12 @@ const submit = () => {
           <article v-for="comment in comments" :key="comment.id" class="flex gap-3">
             <PigAvatar :index="comment.author.avatarIndex" :size="40" :label="`Avatar de ${comment.author.displayName}`" class="ring-2 ring-charcoal/10" />
             <div class="min-w-0 flex-1 bg-cream px-4 py-3">
-              <p class="text-sm font-semibold text-charcoal">{{ comment.author.displayName }} <span class="font-normal text-charcoal/50">@{{ comment.author.handle }}</span></p>
+              <div class="flex items-start justify-between gap-3">
+                <p class="min-w-0 text-sm font-semibold text-charcoal">{{ comment.author.displayName }} <span class="font-normal text-charcoal/50">@{{ comment.author.handle }}</span></p>
+                <button v-if="viewerId && comment.author.id === viewerId" type="button" class="focus-ring grid size-8 shrink-0 place-items-center text-charcoal/45 transition hover:bg-blush hover:text-charcoal" :disabled="busy" aria-label="Eliminar mi comentario" @click="$emit('delete', comment)">
+                  <PhTrash :size="17" aria-hidden="true" />
+                </button>
+              </div>
               <p class="mt-1 leading-relaxed text-charcoal/75">{{ comment.body }}</p>
             </div>
           </article>
