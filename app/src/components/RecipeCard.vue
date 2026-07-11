@@ -65,10 +65,10 @@ const openCard = (event, recipe) => {
           <span class="hidden sm:inline">Ver receta</span><PhArrowRight :size="19" aria-hidden="true" />
         </button>
       </div>
-      <h2 class="font-display text-[clamp(2rem,5vw,3.35rem)] font-bold leading-[1.02] tracking-[-0.05em] text-charcoal">
+      <h2 class="min-w-0 break-words [overflow-wrap:anywhere] font-display text-[clamp(2rem,5vw,3.35rem)] font-bold leading-[1.02] tracking-[-0.05em] text-charcoal">
         {{ recipe.title }}
       </h2>
-      <p class="mt-3 text-base leading-relaxed text-charcoal/72">{{ recipe.summary }}</p>
+      <p class="mt-3 min-w-0 break-words [overflow-wrap:anywhere] text-base leading-relaxed text-charcoal/72">{{ recipe.summary }}</p>
 
       <div class="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-charcoal/15 pt-4">
         <div class="flex items-center gap-2">

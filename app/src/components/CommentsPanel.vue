@@ -51,7 +51,7 @@ const submit = () => {
                   <PhTrash :size="17" aria-hidden="true" />
                 </button>
               </div>
-              <p class="mt-1 leading-relaxed text-charcoal/75">{{ comment.body }}</p>
+              <p class="mt-1 min-w-0 break-words [overflow-wrap:anywhere] leading-relaxed text-charcoal/75">{{ comment.body }}</p>
             </div>
           </article>
           <p v-if="!comments.length" class="py-12 text-center font-display text-2xl text-charcoal/55">Sé la primera persona en comentar.</p>
