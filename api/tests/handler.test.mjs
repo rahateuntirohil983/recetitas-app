@@ -179,3 +179,9 @@ test("normalizes a live title and description", () => {
 test("rejects a live without a useful title", () => {
   assert.match(__test.validateLive({ title: "yo" }).error, /3 caracteres/i);
 });
+
+test("accepts only the live sticker markers shipped by the app", () => {
+  assert.equal(__test.normalizeLiveComment("[[sticker:heart]]"), "[[sticker:heart]]");
+  assert.equal(__test.normalizeLiveComment("[[sticker:unknown]]"), "");
+  assert.equal(__test.normalizeLiveComment("  Quedó buenísimo  "), "Quedó buenísimo");
+});

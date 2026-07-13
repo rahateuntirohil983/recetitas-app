@@ -139,4 +139,69 @@ test("starts, authorizes and publishes a live stream on the existing production 
     body: { action: "read", path: stored.stream_path },
   }), env);
   assert.equal(readAuth.status, 200);
+
+  const stickerCommentResponse = await handleApiRequest(apiRequest(`/api/live/${started.live.id}/comments`, {
+    method: "POST",
+    cookie,
+    body: { body: "[[sticker:heart]]" },
+  }), env);
+  assert.equal(stickerCommentResponse.status, 201);
+
+  const suspendResponse = await handleApiRequest(apiRequest(`/api/live/${started.live.id}/suspend`, {
+    method: "POST",
+    cookie,
+    body: {},
+  }), env);
+  assert.equal(suspendResponse.status, 200);
+  const suspended = await suspendResponse.json();
+  assert.equal(suspended.live.status, "starting");
+  assert.equal(suspended.live.playbackUrl, null);
+
+  const suspendedRead = await handleApiRequest(apiRequest("/api/live/media-auth", {
+    method: "POST",
+    headers: mediaHeaders,
+    body: { action: "read", path: stored.stream_path },
+  }), env);
+  assert.equal(suspendedRead.status, 401);
+
+  const resumeResponse = await handleApiRequest(apiRequest("/api/live/resume", {
+    method: "POST",
+    cookie,
+    body: {},
+  }), env);
+  assert.equal(resumeResponse.status, 200);
+  const resumed = await resumeResponse.json();
+  assert.equal(resumed.live.id, started.live.id);
+  assert.equal(resumed.live.status, "starting");
+  assert.equal(resumed.comments.length, 1);
+  assert.equal(resumed.comments[0].body, "[[sticker:heart]]");
+  assert.notEqual(resumed.publishToken, started.publishToken);
+
+  const resumedStored = database.prepare("SELECT stream_path, published_at FROM live_streams WHERE id = ?").get(started.live.id);
+  assert.notEqual(resumedStored.stream_path, stored.stream_path);
+  assert.equal(resumedStored.published_at, null);
+
+  const stalePublishAuth = await handleApiRequest(apiRequest("/api/live/media-auth", {
+    method: "POST",
+    headers: mediaHeaders,
+    body: { action: "publish", path: resumedStored.stream_path, token: started.publishToken },
+  }), env);
+  assert.equal(stalePublishAuth.status, 401);
+
+  const resumedPublishAuth = await handleApiRequest(apiRequest("/api/live/media-auth", {
+    method: "POST",
+    headers: mediaHeaders,
+    body: { action: "publish", path: resumedStored.stream_path, token: resumed.publishToken },
+  }), env);
+  assert.equal(resumedPublishAuth.status, 200);
+
+  const resumedReadyResponse = await handleApiRequest(apiRequest(`/api/live/${started.live.id}/ready`, {
+    method: "POST",
+    cookie,
+    body: {},
+  }), env);
+  assert.equal(resumedReadyResponse.status, 200);
+  const resumedReady = await resumedReadyResponse.json();
+  assert.equal(resumedReady.live.status, "live");
+  assert.match(resumedReady.live.playbackUrl, new RegExp(`${resumedStored.stream_path}/whep$`));
 });

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   PhArrowsClockwise,
   PhCamera,
@@ -19,10 +19,13 @@ import {
 } from "@phosphor-icons/vue";
 import { api } from "../lib/api.js";
 import { WhipPublisher } from "../lib/live-webrtc.js";
+import { liveStickerFromBody } from "../lib/live-stickers.js";
+import LiveStickerPicker from "./LiveStickerPicker.vue";
 
 const emit = defineEmits(["close", "started", "ended", "login"]);
 
 const preview = ref(null);
+const chatScroll = ref(null);
 const titleInput = ref(null);
 const title = ref("");
 const description = ref("");
@@ -32,6 +35,7 @@ const facing = ref("user");
 const requestingCamera = ref(true);
 const switchingCamera = ref(false);
 const connecting = ref(false);
+const reconnecting = ref(false);
 const isLive = ref(false);
 const muted = ref(false);
 const hasAudio = ref(false);
@@ -44,6 +48,8 @@ const live = ref(null);
 const comments = ref([]);
 const moderation = ref({ moderators: [], bannedUsers: [] });
 const commentBody = ref("");
+const chatFollowsLatest = ref(true);
+const hasNewComments = ref(false);
 
 let mediaStream = null;
 let publisher = null;
@@ -244,13 +250,37 @@ const refreshEvents = async () => {
     live.value = { ...live.value, ...response.live };
     comments.value = response.comments;
     if (response.moderation) moderation.value = response.moderation;
-    if (response.live.status !== "live") await finish(false);
+    if (response.live.status === "ended") await finish(false);
   } catch {
     // The next short poll can recover without interrupting the broadcast.
   }
 };
 
+const updateChatPosition = () => {
+  const element = chatScroll.value;
+  if (!element) return;
+  chatFollowsLatest.value = element.scrollHeight - element.scrollTop - element.clientHeight < 72;
+  if (chatFollowsLatest.value) hasNewComments.value = false;
+};
+
+const scrollToLatest = async (force = false) => {
+  await nextTick();
+  const element = chatScroll.value;
+  if (!element || (!force && !chatFollowsLatest.value)) return;
+  element.scrollTo({ top: element.scrollHeight, behavior: force ? "smooth" : "auto" });
+  chatFollowsLatest.value = true;
+  hasNewComments.value = false;
+};
+
+watch(() => comments.value.at(-1)?.id, (next, previous) => {
+  if (!next || next === previous) return;
+  if (chatFollowsLatest.value) scrollToLatest();
+  else hasNewComments.value = true;
+});
+
 const beginTimers = () => {
+  window.clearInterval(heartbeatTimer);
+  window.clearInterval(eventsTimer);
   heartbeatTimer = window.setInterval(() => api.liveBroadcasterHeartbeat(live.value.id).catch(() => null), 8000);
   eventsTimer = window.setInterval(refreshEvents, 1800);
 };
@@ -259,12 +289,32 @@ const handlePublisherState = (state) => {
   if (state === "connected") {
     window.clearTimeout(publishDisconnectTimer);
     publishDisconnectTimer = null;
+    reconnecting.value = false;
     return;
   }
   if (!["failed", "disconnected"].includes(state) || !isLive.value) return;
-  errorMessage.value = "La conexión del directo se interrumpió. Volvé a iniciarlo cuando recuperes internet.";
+  reconnecting.value = true;
+  errorMessage.value = "Se cortó la señal. Estamos intentando reanudar el directo sin perder el chat.";
+  window.clearInterval(heartbeatTimer);
+  heartbeatTimer = null;
   window.clearTimeout(publishDisconnectTimer);
-  publishDisconnectTimer = window.setTimeout(() => finish(true), state === "failed" ? 0 : 5000);
+  publishDisconnectTimer = window.setTimeout(() => resumeBroadcast({ automatic: true }), state === "failed" ? 700 : 1800);
+};
+
+const publishSession = async (session) => {
+  live.value = session.live;
+  comments.value = session.comments || [];
+  await publisher?.close();
+  publisher = new WhipPublisher({ endpoint: session.publishUrl, token: session.publishToken, onState: handlePublisherState });
+  await publisher.connect(mediaStream);
+  const ready = await api.readyLive(session.live.id);
+  live.value = ready.live;
+  isLive.value = true;
+  reconnecting.value = false;
+  errorMessage.value = "";
+  beginTimers();
+  await refreshEvents();
+  emit("started", live.value);
 };
 
 const startLive = async () => {
@@ -284,19 +334,7 @@ const startLive = async () => {
   let started = null;
   try {
     started = await api.startLive({ title: title.value, description: description.value });
-    live.value = started.live;
-    publisher = new WhipPublisher({
-      endpoint: started.publishUrl,
-      token: started.publishToken,
-      onState: handlePublisherState,
-    });
-    await publisher.connect(mediaStream);
-    const ready = await api.readyLive(started.live.id);
-    live.value = ready.live;
-    comments.value = started.comments || [];
-    isLive.value = true;
-    beginTimers();
-    emit("started", live.value);
+    await publishSession(started);
   } catch (failure) {
     if (started?.live?.id) await api.endLive(started.live.id).catch(() => null);
     await publisher?.close();
@@ -308,17 +346,60 @@ const startLive = async () => {
   }
 };
 
+async function resumeBroadcast({ automatic = false, silentMissing = false } = {}) {
+  if (connecting.value || requestingCamera.value) return false;
+  if (!hasMedia.value || !mediaStream?.getVideoTracks().some((track) => track.readyState === "live")) {
+    await requestInitialCamera();
+    if (!hasMedia.value) return false;
+  }
+  connecting.value = true;
+  reconnecting.value = true;
+  if (!automatic) errorMessage.value = "Buscando un directo reciente para reanudar…";
+  try {
+    const resumed = await api.resumeLive();
+    title.value = resumed.live.title;
+    description.value = resumed.live.description || "";
+    await publishSession(resumed);
+    return true;
+  } catch (failure) {
+    if (failure.status === 404 && failure.code === "LIVE_RESUME_NOT_FOUND") {
+      reconnecting.value = false;
+      if (!silentMissing) errorMessage.value = "Ese directo ya terminó. Podés empezar uno nuevo.";
+      else errorMessage.value = "";
+      isLive.value = false;
+      return false;
+    }
+    if (failure.status === 401) emit("login");
+    errorMessage.value = automatic
+      ? "No pudimos recuperar la señal todavía. Tocá Reanudar para intentarlo otra vez."
+      : (failure.message || "No pudimos reanudar el directo.");
+    if (automatic) {
+      window.clearTimeout(publishDisconnectTimer);
+      publishDisconnectTimer = window.setTimeout(() => resumeBroadcast({ automatic: true }), 5000);
+    }
+    return false;
+  } finally {
+    connecting.value = false;
+  }
+}
+
 const addComment = async () => {
-  const body = commentBody.value.trim();
+  await sendChatBody(commentBody.value.trim());
+};
+
+const sendChatBody = async (body) => {
   if (!body || !live.value) return;
   try {
     await api.addLiveComment(live.value.id, body);
     commentBody.value = "";
+    chatFollowsLatest.value = true;
     await refreshEvents();
   } catch (failure) {
     errorMessage.value = failure.message;
   }
 };
+
+const sendSticker = (marker) => sendChatBody(marker);
 
 const deleteChatComment = async (comment) => {
   try {
@@ -398,7 +479,17 @@ const endLive = async () => {
 
 const closeStudio = async () => {
   if (isLive.value) {
-    await endLive();
+    if (!window.confirm("¿Pausar el directo y volver al perfil? Vas a poder reanudarlo durante 10 minutos sin perder el chat.")) return;
+    connecting.value = true;
+    stopTimers();
+    isLive.value = false;
+    reconnecting.value = false;
+    if (live.value) await api.suspendLive(live.value.id).catch(() => null);
+    await publisher?.close();
+    publisher = null;
+    stopMedia();
+    connecting.value = false;
+    emit("close");
     return;
   }
   await publisher?.close();
@@ -406,32 +497,41 @@ const closeStudio = async () => {
   emit("close");
 };
 
-onMounted(requestInitialCamera);
+const handleVisibilityChange = () => {
+  if (!document.hidden && isLive.value && reconnecting.value) resumeBroadcast({ automatic: true });
+};
+
+onMounted(async () => {
+  document.addEventListener("visibilitychange", handleVisibilityChange);
+  await requestInitialCamera();
+  await resumeBroadcast({ silentMissing: true });
+});
 onBeforeUnmount(() => {
+  document.removeEventListener("visibilitychange", handleVisibilityChange);
   stopTimers();
-  if (live.value && ["starting", "live"].includes(live.value.status)) api.endLive(live.value.id).catch(() => null);
   publisher?.close();
   stopMedia();
 });
 </script>
 
 <template>
-  <div class="fixed inset-0 z-[90] overflow-y-auto bg-charcoal/90 p-0 sm:p-5" role="dialog" aria-modal="true" aria-label="Estudio de directo">
-    <section class="mx-auto min-h-full max-w-[1180px] border-charcoal bg-porcelain sm:min-h-0 sm:border-2 sm:shadow-[10px_10px_0_#e3b4b9]">
-      <header class="flex items-center justify-between border-b-2 border-charcoal px-4 py-4 sm:px-7">
+  <div class="fixed inset-0 z-[90] bg-charcoal/90 p-0 sm:overflow-y-auto sm:p-5" :class="isLive ? 'overflow-hidden' : 'overflow-y-auto'" role="dialog" aria-modal="true" aria-label="Estudio de directo">
+    <section class="mx-auto max-w-[1180px] border-charcoal bg-porcelain sm:min-h-0 sm:border-2 sm:shadow-[10px_10px_0_#e3b4b9]" :class="isLive ? 'h-[100dvh] overflow-hidden sm:h-auto sm:overflow-visible' : 'min-h-full'">
+      <header class="flex items-center justify-between border-b-2 border-charcoal px-3 py-2.5 sm:px-7 sm:py-4">
         <div>
           <p class="text-xs font-bold uppercase tracking-[0.17em] text-olive-dark">Tu cocina, ahora</p>
-          <h2 class="font-display text-3xl font-bold sm:text-4xl">{{ isLive ? "Estás en directo." : "Prepará el directo." }}</h2>
+          <h2 class="font-display text-2xl font-bold sm:text-4xl">{{ reconnecting ? "Reconectando…" : (isLive ? "Estás en directo." : "Prepará el directo.") }}</h2>
         </div>
-        <button type="button" class="focus-ring grid size-12 place-items-center border-2 border-charcoal hover:bg-blush" aria-label="Cerrar estudio" @click="closeStudio"><PhX :size="24" /></button>
+        <button type="button" class="focus-ring grid size-10 place-items-center border-2 border-charcoal hover:bg-blush sm:size-12" :aria-label="isLive ? 'Pausar y cerrar estudio' : 'Cerrar estudio'" @click="closeStudio"><PhX :size="24" /></button>
       </header>
 
-      <div class="grid min-w-0 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <div class="min-w-0 border-charcoal lg:border-r-2">
-          <div class="relative aspect-[9/16] max-h-[72vh] overflow-hidden bg-charcoal sm:aspect-video">
+      <div class="min-w-0 lg:grid lg:grid-cols-[minmax(0,1fr)_360px]" :class="isLive ? 'flex h-[calc(100dvh-70px)] flex-col overflow-hidden sm:h-auto sm:overflow-visible' : 'grid'">
+        <div class="min-w-0 shrink-0 border-charcoal lg:border-r-2">
+          <div class="relative overflow-hidden bg-charcoal" :class="isLive ? 'h-[38dvh] max-h-[38dvh] sm:h-auto sm:max-h-[72vh] sm:aspect-video' : 'aspect-[9/16] max-h-[62vh] sm:aspect-video'">
             <video ref="preview" autoplay muted playsinline class="h-full w-full object-cover" :class="facing === 'user' && 'scale-x-[-1]'" />
             <div v-if="requestingCamera" class="absolute inset-0 grid place-items-center bg-charcoal text-center text-porcelain"><div><PhCamera :size="52" class="mx-auto" /><p class="mt-3 font-semibold">Esperando permiso para la cámara…</p></div></div>
             <div v-if="isLive" class="absolute left-4 top-4 flex items-center gap-2 bg-blush px-3 py-2 text-sm font-bold text-charcoal"><span class="size-2 rounded-full bg-charcoal" /> EN DIRECTO</div>
+            <div v-if="reconnecting" class="absolute inset-0 grid place-items-center bg-charcoal/80 px-6 text-center text-porcelain"><div><PhArrowsClockwise :size="46" class="mx-auto" /><p class="mt-3 font-display text-2xl font-bold">Recuperando la señal…</p><button type="button" class="focus-ring mt-4 bg-blush px-4 py-3 font-bold text-charcoal" :disabled="connecting" @click="resumeBroadcast()">Reanudar ahora</button></div></div>
             <div v-if="cameraPaused" class="absolute inset-0 grid place-items-center bg-charcoal text-porcelain"><div class="text-center"><PhVideoCameraSlash :size="58" class="mx-auto" /><p class="mt-3 font-semibold">Cámara pausada</p></div></div>
           </div>
 
@@ -443,7 +543,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <aside class="min-w-0 p-5 sm:p-7">
+        <aside class="min-w-0 p-4 sm:p-7" :class="isLive ? 'flex min-h-0 flex-1 flex-col overflow-hidden lg:block lg:overflow-visible' : ''">
           <template v-if="!isLive">
             <label class="field-label">Título del directo<input ref="titleInput" v-model="title" maxlength="80" class="field-input" placeholder="Ej: Ñoquis en familia" /></label>
             <label class="field-label mt-5">Descripción<textarea v-model="description" maxlength="280" rows="5" class="field-input resize-none" placeholder="Contá qué vas a cocinar, para quién o qué pueden preguntarte." /></label>
@@ -454,17 +554,17 @@ onBeforeUnmount(() => {
           </template>
 
           <template v-else>
-            <h3 class="break-words font-display text-3xl font-bold">{{ live.title }}</h3>
-            <p v-if="live.description" class="mt-2 break-words text-sm leading-relaxed text-charcoal/65">{{ live.description }}</p>
-            <div class="mt-5 grid grid-cols-3 border-2 border-charcoal bg-cream text-center">
-              <div class="py-3"><PhEye :size="20" class="mx-auto" /><strong class="mt-1 block">{{ live.viewerCount }}</strong></div>
-              <div class="border-x-2 border-charcoal py-3"><PhHeart :size="20" class="mx-auto" /><strong class="mt-1 block">{{ live.likeCount }}</strong></div>
-              <div class="py-3"><PhChatCircleDots :size="20" class="mx-auto" /><strong class="mt-1 block">{{ comments.length }}</strong></div>
+            <h3 class="truncate font-display text-2xl font-bold sm:text-3xl">{{ live.title }}</h3>
+            <p v-if="live.description" class="mt-1 line-clamp-2 break-words text-sm leading-relaxed text-charcoal/65 sm:mt-2">{{ live.description }}</p>
+            <div class="mt-3 grid grid-cols-3 border-2 border-charcoal bg-cream text-center sm:mt-5">
+              <div class="py-2 sm:py-3"><PhEye :size="19" class="mx-auto" /><strong class="block">{{ live.viewerCount }}</strong></div>
+              <div class="border-x-2 border-charcoal py-2 sm:py-3"><PhHeart :size="19" class="mx-auto" /><strong class="block">{{ live.likeCount }}</strong></div>
+              <div class="py-2 sm:py-3"><PhChatCircleDots :size="19" class="mx-auto" /><strong class="block">{{ comments.length }}</strong></div>
             </div>
-            <div class="mt-5 max-h-56 space-y-3 overflow-y-auto border-y-2 border-charcoal/15 py-4" aria-live="polite">
+            <div ref="chatScroll" class="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain border-y-2 border-charcoal/15 py-3 pr-1 lg:max-h-56 lg:flex-none sm:mt-5 sm:py-4" aria-live="polite" @scroll.passive="updateChatPosition">
               <p v-if="!comments.length" class="text-sm text-charcoal/50">Los comentarios van a aparecer acá.</p>
               <div v-for="comment in comments" :key="comment.id" class="border-b border-charcoal/12 pb-3 text-sm">
-                <div class="flex min-w-0 items-start gap-2"><p class="min-w-0 flex-1"><strong>@{{ comment.author.handle }}</strong><span v-if="comment.author.isModerator" class="ml-1 bg-olive px-1.5 py-0.5 text-[10px] font-bold">MOD</span> <span class="break-words [overflow-wrap:anywhere]">{{ comment.body }}</span></p>
+                <div class="flex min-w-0 items-start gap-2"><div class="min-w-0 flex-1"><strong>@{{ comment.author.handle }}</strong><span v-if="comment.author.isModerator" class="ml-1 bg-olive px-1.5 py-0.5 text-[10px] font-bold">MOD</span><img v-if="liveStickerFromBody(comment.body)" :src="liveStickerFromBody(comment.body).src" :alt="liveStickerFromBody(comment.body).label" class="mt-1 h-24 w-24 object-contain" width="96" height="96" /><span v-else class="break-words [overflow-wrap:anywhere]"> {{ comment.body }}</span></div>
                   <div v-if="comment.author.id !== live.author.id" class="flex shrink-0 gap-1">
                     <button type="button" class="focus-ring p-1 hover:bg-blush" title="Borrar mensaje" @click="deleteChatComment(comment)"><PhTrash :size="17" /></button>
                     <button type="button" class="focus-ring p-1 hover:bg-olive" :title="comment.author.isModerator ? 'Quitar moderador' : 'Dar moderador'" @click="toggleModerator(comment)"><PhShieldCheck :size="17" :weight="comment.author.isModerator ? 'fill' : 'regular'" /></button>
@@ -473,13 +573,14 @@ onBeforeUnmount(() => {
                 </div>
               </div>
             </div>
-            <form class="mt-4 flex gap-2" @submit.prevent="addComment"><input v-model="commentBody" maxlength="180" class="min-w-0 flex-1 border-2 border-charcoal bg-cream px-3" placeholder="Responder en vivo" /><button class="bg-charcoal px-4 py-3 font-bold text-porcelain">Enviar</button></form>
+            <button v-if="hasNewComments" type="button" class="focus-ring mt-2 w-full bg-olive px-3 py-2 text-sm font-bold" @click="scrollToLatest(true)">Ver comentarios nuevos ↓</button>
+            <form class="mt-3 grid grid-cols-[auto_minmax(0,1fr)_auto] gap-2" @submit.prevent="addComment"><LiveStickerPicker @select="sendSticker" /><input v-model="commentBody" maxlength="180" class="min-w-0 border-2 border-charcoal bg-cream px-3" placeholder="Responder en vivo" /><button class="bg-charcoal px-3 py-3 font-bold text-porcelain sm:px-4">Enviar</button></form>
             <details v-if="moderation.moderators.length || moderation.bannedUsers.length" class="mt-5 border-2 border-charcoal/20 bg-cream px-4 py-3">
               <summary class="cursor-pointer font-bold">Administrar chat</summary>
               <div v-if="moderation.moderators.length" class="mt-4"><p class="text-xs font-bold uppercase tracking-[0.13em] text-olive-dark">Moderadores</p><div v-for="user in moderation.moderators" :key="user.id" class="mt-2 flex items-center justify-between gap-3 text-sm"><span class="truncate">@{{ user.handle }}</span><button type="button" class="font-bold underline" @click="toggleModeratorUser(user)">Quitar</button></div></div>
               <div v-if="moderation.bannedUsers.length" class="mt-4"><p class="text-xs font-bold uppercase tracking-[0.13em] text-olive-dark">Bloqueados del chat</p><div v-for="user in moderation.bannedUsers" :key="user.id" class="mt-2 flex items-center justify-between gap-3 text-sm"><span class="truncate">@{{ user.handle }}</span><button type="button" class="font-bold underline" @click="unbanUser(user)">Desbloquear</button></div></div>
             </details>
-            <button type="button" class="focus-ring mt-6 inline-flex min-h-14 w-full items-center justify-between bg-charcoal px-5 font-bold text-porcelain" :disabled="connecting" @click="endLive"><span>Terminar directo</span><PhStop :size="23" weight="fill" /></button>
+            <button type="button" class="focus-ring mt-3 inline-flex min-h-12 w-full items-center justify-between bg-charcoal px-5 font-bold text-porcelain sm:mt-6 sm:min-h-14" :disabled="connecting" @click="endLive"><span>Terminar directo</span><PhStop :size="23" weight="fill" /></button>
           </template>
 
           <p v-if="errorMessage" class="mt-5 border-l-4 border-blush bg-cream px-4 py-3 text-sm font-semibold" role="alert">{{ errorMessage }}</p>

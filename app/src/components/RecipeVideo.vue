@@ -20,6 +20,7 @@ const player = ref(null);
 const video = ref(null);
 const playing = ref(false);
 const muted = ref(false);
+const volume = ref(1);
 const duration = ref(0);
 const currentTime = ref(0);
 const speed = ref(1);
@@ -38,6 +39,7 @@ const sync = () => {
   if (!video.value) return;
   playing.value = !video.value.paused;
   muted.value = video.value.muted;
+  volume.value = video.value.volume;
   duration.value = Number.isFinite(video.value.duration) ? video.value.duration : 0;
   currentTime.value = video.value.currentTime || 0;
 };
@@ -64,6 +66,14 @@ const seekTo = (event) => {
 const toggleMute = () => {
   if (!video.value) return;
   video.value.muted = !video.value.muted;
+  if (!video.value.muted && video.value.volume === 0) video.value.volume = 0.8;
+  sync();
+};
+
+const setVolume = (event) => {
+  if (!video.value) return;
+  video.value.volume = Number(event.target.value);
+  video.value.muted = video.value.volume === 0;
   sync();
 };
 
@@ -156,6 +166,7 @@ onBeforeUnmount(() => window.clearTimeout(holdTimer));
         <span class="flex-1" />
         <button type="button" class="video-control min-w-10 px-2 text-xs font-bold" :aria-label="`Velocidad ${speed} por`" @click.stop="cycleSpeed">{{ speed }}×</button>
         <button v-if="!compact" type="button" class="video-control" :aria-label="muted ? 'Activar sonido' : 'Silenciar'" @click.stop="toggleMute"><PhSpeakerSlash v-if="muted" :size="20" /><PhSpeakerHigh v-else :size="20" /></button>
+        <label v-if="!compact" class="hidden w-24 items-center sm:flex" @click.stop><span class="sr-only">Volumen del video</span><input :value="muted ? 0 : volume" type="range" min="0" max="1" step="0.05" class="video-progress w-full" @input="setVolume" /></label>
         <button type="button" class="video-control" aria-label="Pantalla completa" @click.stop="fullscreen"><PhArrowsOut :size="20" /></button>
       </div>
     </div>

@@ -289,6 +289,13 @@ export const api = {
     return { live: demoLive, publishUrl: "http://127.0.0.1:8889/demo/whip", publishToken: "demo", comments: [] };
   },
 
+  async resumeLive() {
+    if (!useDemo) return request("/api/live/resume", { method: "POST", body: "{}" });
+    if (!demoLive || demoLive.status === "ended") throw Object.assign(new Error("No hay un directo reciente para reanudar."), { status: 404, code: "LIVE_RESUME_NOT_FOUND" });
+    demoLive.status = "starting";
+    return { live: demoLive, publishUrl: "http://127.0.0.1:8889/demo/whip", publishToken: "demo", comments: demoLiveComments, resumed: true };
+  },
+
   async endLive(liveId) {
     if (!useDemo) return request(`/api/live/${encodeURIComponent(liveId)}/end`, { method: "POST", body: "{}" });
     if (demoLive?.id === liveId) demoLive.status = "ended";
@@ -298,6 +305,12 @@ export const api = {
   async readyLive(liveId) {
     if (!useDemo) return request(`/api/live/${encodeURIComponent(liveId)}/ready`, { method: "POST", body: "{}" });
     if (demoLive?.id === liveId) demoLive.status = "live";
+    return { live: demoLive };
+  },
+
+  async suspendLive(liveId) {
+    if (!useDemo) return request(`/api/live/${encodeURIComponent(liveId)}/suspend`, { method: "POST", body: "{}" });
+    if (demoLive?.id === liveId) demoLive.status = "starting";
     return { live: demoLive };
   },
 

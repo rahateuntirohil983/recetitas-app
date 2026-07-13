@@ -37,7 +37,7 @@ defineEmits(["back", "edit", "edit-recipe", "follow", "connections", "open", "ta
             <PigAvatar :index="profile.avatarIndex" :size="128" :label="`Avatar de ${profile.displayName}`" class="border-4 border-porcelain shadow-[0_0_0_2px_#242421]" />
             <div v-if="profile.isOwnProfile" class="grid gap-2 sm:flex">
               <button type="button" class="focus-ring inline-flex min-h-12 items-center justify-center gap-2 border-2 border-charcoal bg-blush px-5 font-semibold transition hover:bg-olive" @click="$emit('start-live')">
-                <PhVideoCamera :size="21" weight="fill" aria-hidden="true" /> {{ profile.live ? "Volver al directo" : "Hacer un directo" }}
+                <PhVideoCamera :size="21" weight="fill" aria-hidden="true" /> {{ profile.live ? "Reanudar directo" : "Iniciar o reanudar" }}
               </button>
               <button type="button" class="focus-ring inline-flex min-h-12 items-center justify-center gap-2 border-2 border-charcoal bg-porcelain px-5 font-semibold transition hover:bg-blush" @click="$emit('edit')">
                 <PhPencilSimple :size="20" aria-hidden="true" /> Editar perfil

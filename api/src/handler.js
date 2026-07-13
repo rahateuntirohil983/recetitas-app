@@ -8,6 +8,8 @@ const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const ALLOWED_VIDEO_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime"]);
 const LIVE_ACTIVE_WINDOW_MS = 45_000;
 const LIVE_VIEWER_WINDOW_MS = 25_000;
+const LIVE_RESUME_WINDOW_MS = 10 * 60_000;
+const LIVE_STICKER_IDS = new Set(["hello", "heart", "delicious", "laugh", "applause", "surprised"]);
 
 const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS users (
@@ -642,6 +644,14 @@ const unreadNotificationCount = async (db, userId) => {
 
 const liveActiveCutoff = () => new Date(Date.now() - LIVE_ACTIVE_WINDOW_MS).toISOString();
 const liveViewerCutoff = () => new Date(Date.now() - LIVE_VIEWER_WINDOW_MS).toISOString();
+const liveResumeCutoff = () => new Date(Date.now() - LIVE_RESUME_WINDOW_MS).toISOString();
+
+const normalizeLiveComment = (value) => {
+  const body = cleanText(value, 180);
+  const sticker = body.match(/^\[\[sticker:([a-z-]+)\]\]$/);
+  if (sticker && !LIVE_STICKER_IDS.has(sticker[1])) return "";
+  return body;
+};
 
 const liveDto = (row, liveBaseUrl = "") => ({
   id: row.id,
@@ -902,6 +912,37 @@ export async function handleApiRequest(request, env) {
       }, 201);
     }
 
+    if (request.method === "POST" && path === "/api/live/resume") {
+      const auth = await requireUser(request, env.DB);
+      if (auth.response) return auth.response;
+      if (!env.LIVE_WEBRTC_BASE_URL || !env.LIVE_AUTH_TOKEN) {
+        return error(503, "LIVE_UNAVAILABLE", "Los directos todavía no están disponibles.");
+      }
+      const resumable = await env.DB.prepare(`SELECT id FROM live_streams
+        WHERE user_id = ? AND status = 'live' AND last_seen_at > ?
+        ORDER BY started_at DESC LIMIT 1`)
+        .bind(auth.user.id, liveResumeCutoff())
+        .first();
+      if (!resumable) return error(404, "LIVE_RESUME_NOT_FOUND", "No hay un directo reciente para reanudar.");
+
+      const streamPath = `stream_${randomHex(12)}`;
+      const publishToken = randomHex(32);
+      const timestamp = now();
+      await env.DB.prepare(`UPDATE live_streams
+        SET stream_path = ?, publish_token_hash = ?, published_at = NULL, last_seen_at = ?, ended_at = NULL
+        WHERE id = ? AND user_id = ? AND status = 'live'`)
+        .bind(streamPath, await sha256(publishToken), timestamp, resumable.id, auth.user.id)
+        .run();
+      const live = await getLiveStream(env.DB, { liveId: resumable.id, viewerId: auth.user.id, liveBaseUrl: env.LIVE_WEBRTC_BASE_URL, includeEnded: true });
+      return json({
+        live,
+        comments: await getLiveComments(env.DB, resumable.id),
+        publishUrl: `${String(env.LIVE_WEBRTC_BASE_URL).replace(/\/$/, "")}/${streamPath}/whip`,
+        publishToken,
+        resumed: true,
+      });
+    }
+
     const liveCommentDeleteMatch = path.match(/^\/api\/live\/([^/]+)\/comments\/([^/]+)$/);
     if (request.method === "DELETE" && liveCommentDeleteMatch) {
       const auth = await requireUser(request, env.DB);
@@ -967,7 +1008,7 @@ export async function handleApiRequest(request, env) {
       return json({ active: !existing });
     }
 
-    const liveMatch = path.match(/^\/api\/live\/([^/]+)\/(events|ready|end|heartbeat|broadcaster-heartbeat|like|comments)$/);
+    const liveMatch = path.match(/^\/api\/live\/([^/]+)\/(events|ready|suspend|end|heartbeat|broadcaster-heartbeat|like|comments)$/);
     if (liveMatch) {
       const [, liveId, action] = liveMatch;
 
@@ -986,10 +1027,21 @@ export async function handleApiRequest(request, env) {
         return json({ live });
       }
 
+      if (request.method === "POST" && action === "suspend") {
+        const auth = await requireUser(request, env.DB);
+        if (auth.response) return auth.response;
+        const result = await env.DB.prepare("UPDATE live_streams SET published_at = NULL, last_seen_at = ? WHERE id = ? AND user_id = ? AND status = 'live'")
+          .bind(now(), liveId, auth.user.id)
+          .run();
+        if (!result.meta?.changes) return error(404, "LIVE_NOT_FOUND", "No encontramos tu directo.");
+        const live = await getLiveStream(env.DB, { liveId, viewerId: auth.user.id, liveBaseUrl: env.LIVE_WEBRTC_BASE_URL, includeEnded: true });
+        return json({ live });
+      }
+
       if (request.method === "GET" && action === "events") {
         const timestamp = now();
         await env.DB.prepare("UPDATE live_streams SET status = 'ended', ended_at = COALESCE(ended_at, ?) WHERE id = ? AND status = 'live' AND last_seen_at <= ?")
-          .bind(timestamp, liveId, liveActiveCutoff())
+          .bind(timestamp, liveId, liveResumeCutoff())
           .run();
         const live = await getLiveStream(env.DB, { liveId, viewerId: viewer?.id || "", liveBaseUrl: env.LIVE_WEBRTC_BASE_URL, includeEnded: true });
         if (!live) return error(404, "LIVE_NOT_FOUND", "No encontramos ese directo.");
@@ -1070,7 +1122,7 @@ export async function handleApiRequest(request, env) {
           .first();
         if (!active) return error(404, "LIVE_ENDED", "El directo terminó.");
         if ((await getLiveRole(env.DB, liveId, auth.user.id)).banned) return error(403, "LIVE_CHAT_BANNED", "Fuiste bloqueado de este chat.");
-        const body = cleanText((await readBody(request)).body, 180);
+        const body = normalizeLiveComment((await readBody(request)).body);
         if (!body) return error(422, "EMPTY_LIVE_COMMENT", "Escribí un comentario.");
         const commentId = createId("lvc");
         await env.DB.prepare("INSERT INTO live_comments (id, live_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)")
@@ -1668,6 +1720,7 @@ export const __test = {
   cleanText,
   cleanLines,
   hashPassword,
+  normalizeLiveComment,
   avatarIndexForRow,
   hasValidOrigin,
   parseCookies,

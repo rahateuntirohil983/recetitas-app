@@ -91,6 +91,20 @@ export class WhepReader extends LiveWebRtcSession {
   constructor(options) {
     super(options);
     this.onTrack = options.onTrack || (() => {});
+    this.videoQuality = options.videoQuality || "auto";
+    this.videoTrack = null;
+  }
+
+  async setVideoQuality(quality = "auto") {
+    this.videoQuality = quality;
+    if (!this.videoTrack?.applyConstraints) return false;
+    const maxEdge = quality === "data" ? 640 : quality === "balanced" ? 960 : quality === "high" ? 1280 : null;
+    try {
+      await this.videoTrack.applyConstraints(maxEdge ? { width: { max: maxEdge }, height: { max: maxEdge } } : {});
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async connect() {
@@ -98,7 +112,18 @@ export class WhepReader extends LiveWebRtcSession {
     this.watchConnection();
     this.peer.addTransceiver("video", { direction: "recvonly" });
     this.peer.addTransceiver("audio", { direction: "recvonly" });
-    this.peer.addEventListener("track", (event) => this.onTrack(event.streams[0] || new MediaStream([event.track])));
+    this.peer.addEventListener("track", async (event) => {
+      if (event.track.kind === "video") {
+        this.videoTrack = event.track;
+        await this.setVideoQuality(this.videoQuality);
+      }
+      this.onTrack(event.streams[0] || new MediaStream([event.track]));
+    });
     this.sessionUrl = await exchangeSdp(this.peer, this.endpoint);
+  }
+
+  async close() {
+    this.videoTrack = null;
+    await super.close();
   }
 }
