@@ -677,6 +677,27 @@ const getLiveStream = async (db, { liveId = null, userId = null, viewerId = "", 
   return row ? liveDto(row, liveBaseUrl) : null;
 };
 
+const getDiscoverLiveStreams = async (db, { viewerId = "", liveBaseUrl = "", limit = 8 } = {}) => {
+  const safeLimit = Math.min(Math.max(Number(limit) || 8, 1), 12);
+  const result = await db.prepare(`SELECT
+      ls.*, u.handle, u.display_name, u.avatar_url,
+      (SELECT COUNT(*) FROM live_likes ll WHERE ll.live_id = ls.id) AS like_count,
+      (SELECT COUNT(*) FROM live_comments lc WHERE lc.live_id = ls.id) AS comment_count,
+      (SELECT COUNT(*) FROM live_viewers lv WHERE lv.live_id = ls.id AND lv.last_seen_at > ?) AS viewer_count,
+      EXISTS(SELECT 1 FROM live_likes ml WHERE ml.live_id = ls.id AND ml.user_id = ?) AS liked_by_me,
+      (ls.user_id = ?) AS viewer_is_owner,
+      EXISTS(SELECT 1 FROM live_moderators lm WHERE lm.live_id = ls.id AND lm.user_id = ?) AS viewer_is_moderator,
+      EXISTS(SELECT 1 FROM live_bans lb WHERE lb.live_id = ls.id AND lb.user_id = ?) AS viewer_is_banned
+    FROM live_streams ls
+    JOIN users u ON u.id = ls.user_id
+    WHERE ls.status = 'live' AND ls.last_seen_at > ?
+    ORDER BY viewer_count DESC, ls.started_at DESC
+    LIMIT ?`)
+    .bind(liveViewerCutoff(), viewerId, viewerId, viewerId, viewerId, liveActiveCutoff(), safeLimit)
+    .all();
+  return (result.results || []).map((row) => liveDto(row, liveBaseUrl));
+};
+
 const getLiveComments = async (db, liveId) => {
   const result = await db.prepare(`SELECT lc.id, lc.body, lc.created_at, u.id AS author_id, u.handle, u.display_name, u.avatar_url,
       (ls.user_id = u.id) AS author_is_owner,
@@ -1216,7 +1237,7 @@ export async function handleApiRequest(request, env) {
 
     if (request.method === "GET" && path === "/api/discover") {
       const selectedTag = normalizeTag(url.searchParams.get("tag"));
-      const [tagResult, creatorResult, items] = await Promise.all([
+      const [tagResult, creatorResult, items, lives] = await Promise.all([
         env.DB.prepare(`SELECT
             rt.tag,
             COUNT(DISTINCT rt.recipe_id) AS recipe_count,
@@ -1242,6 +1263,10 @@ export async function handleApiRequest(request, env) {
           .bind(viewer?.id || "", viewer?.id || "", viewer?.id || "")
           .all(),
         getFeed(env.DB, viewer?.id || "", 30, null, selectedTag || null),
+        getDiscoverLiveStreams(env.DB, {
+          viewerId: viewer?.id || "",
+          liveBaseUrl: env.LIVE_WEBRTC_BASE_URL,
+        }),
       ]);
 
       return json({
@@ -1257,6 +1282,7 @@ export async function handleApiRequest(request, env) {
           followerCount: Number(row.follower_count || 0),
           followed: Boolean(row.followed_by_me),
         })),
+        lives,
         items,
       });
     }

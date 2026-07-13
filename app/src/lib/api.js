@@ -91,6 +91,7 @@ export const api = {
       selectedTag: tag || null,
       tags: [...counts.entries()].map(([name, recipeCount]) => ({ name, recipeCount, engagement: 0 })),
       creators: [...people.values()].filter((person) => person.id !== demoCurrentUser.id).map((person) => ({ ...person, recipeCount: recipes.filter((recipe) => recipe.author.id === person.id).length, followerCount: 0, followed: followedUsers.has(person.id) })),
+      lives: demoLive ? [demoLive] : [],
       items: tag ? recipes.filter((recipe) => (recipe.tags || []).includes(tag)) : recipes,
     };
   },

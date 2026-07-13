@@ -3,11 +3,13 @@ import { computed, ref } from "vue";
 import { PhHash, PhMagnifyingGlass, PhUserPlus } from "@phosphor-icons/vue";
 import PigAvatar from "./PigAvatar.vue";
 import RecipeCard from "./RecipeCard.vue";
+import DiscoverLiveCard from "./DiscoverLiveCard.vue";
 
 const props = defineProps({
   recipes: { type: Array, default: () => [] },
   tags: { type: Array, default: () => [] },
   creators: { type: Array, default: () => [] },
+  lives: { type: Array, default: () => [] },
   selectedTag: { type: String, default: "" },
   viewerId: { type: String, default: "" },
   loading: { type: Boolean, default: false },
@@ -20,6 +22,12 @@ const search = ref("");
 const term = computed(() => search.value.trim().toLowerCase().replace(/^#/, ""));
 const visibleTags = computed(() => !term.value ? props.tags : props.tags.filter((tag) => tag.name.includes(term.value)));
 const visibleCreators = computed(() => !term.value ? props.creators : props.creators.filter((person) => [person.displayName, person.handle].some((value) => String(value).toLowerCase().includes(term.value))));
+const visibleLives = computed(() => !term.value ? props.lives : props.lives.filter((live) => [
+  live.title,
+  live.description,
+  live.author.displayName,
+  live.author.handle,
+].some((value) => String(value || "").toLowerCase().includes(term.value))));
 const visibleRecipes = computed(() => !term.value ? props.recipes : props.recipes.filter((recipe) => [
   recipe.title,
   recipe.summary,
@@ -44,6 +52,19 @@ const visibleRecipes = computed(() => !term.value ? props.recipes : props.recipe
         <input v-model="search" type="search" class="min-h-14 w-full border-2 border-charcoal bg-porcelain pl-12 pr-4 outline-none placeholder:text-charcoal/40 focus:bg-cream" placeholder="Receta, persona o #hashtag" />
       </label>
     </header>
+
+    <section v-if="visibleLives.length" class="mt-8">
+      <div class="mb-5 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p class="text-xs font-bold uppercase tracking-[0.17em] text-olive-dark">Ahora mismo</p>
+          <h2 class="font-display text-4xl font-bold tracking-[-0.045em] sm:text-5xl">Cocinas en vivo.</h2>
+        </div>
+        <p class="max-w-[360px] text-sm leading-relaxed text-charcoal/60">Entrá, mirá qué están preparando y sumate al chat mientras cocinan.</p>
+      </div>
+      <div class="grid gap-7 lg:grid-cols-2">
+        <DiscoverLiveCard v-for="live in visibleLives" :key="live.id" :live="live" @open="$emit('profile', $event)" />
+      </div>
+    </section>
 
     <section class="mt-8">
       <div class="flex items-end justify-between gap-4">

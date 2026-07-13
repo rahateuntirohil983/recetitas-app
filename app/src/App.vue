@@ -35,6 +35,7 @@ const activeView = ref("feed");
 const lastCollectionView = ref("feed");
 const discoverTags = ref([]);
 const discoverCreators = ref([]);
+const discoverLives = ref([]);
 const selectedDiscoverTag = ref("");
 const loginOpen = ref(false);
 const composerOpen = ref(false);
@@ -105,6 +106,7 @@ const loadDiscover = async (tag = "", updateUrl = true) => {
     recipes.value = response.items;
     discoverTags.value = response.tags;
     discoverCreators.value = response.creators;
+    discoverLives.value = response.lives || [];
     selectedDiscoverTag.value = response.selectedTag || "";
   } catch (failure) {
     flash(failure.message);
@@ -656,6 +658,7 @@ onMounted(async () => {
         :recipes="recipes"
         :tags="discoverTags"
         :creators="discoverCreators"
+        :lives="discoverLives"
         :selected-tag="selectedDiscoverTag"
         :viewer-id="session.user?.id || ''"
         :loading="loading"
