@@ -37,7 +37,7 @@ const switchingCamera = ref(false);
 const connecting = ref(false);
 const reconnecting = ref(false);
 const isLive = ref(false);
-const mobilePreviewExpanded = ref(false);
+const mobilePanel = ref("chat");
 const muted = ref(false);
 const hasAudio = ref(false);
 const cameraPaused = ref(false);
@@ -518,7 +518,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="fixed inset-0 z-[90] bg-charcoal/90 p-0 lg:overflow-y-auto lg:p-5" :class="isLive ? 'overflow-hidden' : 'overflow-y-auto'" role="dialog" aria-modal="true" aria-label="Estudio de directo">
     <section class="mx-auto max-w-[1180px] border-charcoal bg-porcelain sm:min-h-0 sm:border-2 sm:shadow-[10px_10px_0_#e3b4b9]" :class="isLive ? 'h-[100dvh] overflow-hidden lg:h-auto lg:overflow-visible' : 'min-h-full'">
-      <header class="flex items-center justify-between border-b-2 border-charcoal px-3 py-2.5 sm:px-7 sm:py-4">
+      <header class="items-center justify-between border-b-2 border-charcoal px-3 py-2.5 sm:px-7 sm:py-4" :class="isLive ? 'hidden lg:flex' : 'flex'">
         <div>
           <p class="text-xs font-bold uppercase tracking-[0.17em] text-olive-dark">Tu cocina, ahora</p>
           <h2 class="font-display text-2xl font-bold sm:text-4xl">{{ reconnecting ? "Reconectando…" : (isLive ? "Estás en directo." : "Prepará el directo.") }}</h2>
@@ -526,18 +526,21 @@ onBeforeUnmount(() => {
         <button type="button" class="focus-ring grid size-10 place-items-center border-2 border-charcoal hover:bg-blush sm:size-12" :aria-label="isLive ? 'Pausar y cerrar estudio' : 'Cerrar estudio'" @click="closeStudio"><PhX :size="24" /></button>
       </header>
 
-      <div class="min-w-0 lg:grid lg:grid-cols-[minmax(0,1fr)_360px]" :class="isLive ? 'flex h-[calc(100dvh-70px)] flex-col overflow-hidden lg:h-auto lg:overflow-visible' : 'grid'">
-        <div class="min-w-0 shrink-0 border-charcoal lg:border-r-2">
-          <div class="relative overflow-hidden bg-charcoal" :class="isLive ? [mobilePreviewExpanded ? 'h-[34dvh] max-h-[34dvh]' : 'h-[22dvh] max-h-[22dvh]', 'lg:h-auto lg:max-h-[72vh] lg:aspect-video'] : 'aspect-[9/16] max-h-[62vh] sm:aspect-video'">
+      <div class="min-w-0 lg:grid lg:grid-cols-[minmax(0,1fr)_360px]" :class="isLive ? 'flex h-[100dvh] flex-col overflow-hidden lg:h-auto lg:overflow-visible' : 'grid'">
+        <div class="relative min-w-0 shrink-0 border-charcoal lg:block lg:h-auto lg:flex-none lg:border-r-2" :class="isLive ? (mobilePanel === 'camera' ? 'h-full flex-1' : 'hidden') : ''">
+          <div class="relative overflow-hidden bg-charcoal" :class="isLive ? [mobilePanel === 'camera' ? 'h-full max-h-none' : 'h-[22dvh] max-h-[22dvh]', 'lg:h-auto lg:max-h-[72vh] lg:aspect-video'] : 'aspect-[9/16] max-h-[62vh] sm:aspect-video'">
             <video ref="preview" autoplay muted playsinline class="h-full w-full object-cover" :class="facing === 'user' && 'scale-x-[-1]'" />
             <div v-if="requestingCamera" class="absolute inset-0 grid place-items-center bg-charcoal text-center text-porcelain"><div><PhCamera :size="52" class="mx-auto" /><p class="mt-3 font-semibold">Esperando permiso para la cámara…</p></div></div>
             <div v-if="isLive" class="absolute left-4 top-4 flex items-center gap-2 bg-blush px-3 py-2 text-sm font-bold text-charcoal"><span class="size-2 rounded-full bg-charcoal" /> EN DIRECTO</div>
-            <button v-if="isLive && !reconnecting" type="button" class="focus-ring absolute right-3 top-3 bg-porcelain/95 px-3 py-2 text-xs font-bold text-charcoal shadow-lg lg:hidden" @click="mobilePreviewExpanded = !mobilePreviewExpanded">{{ mobilePreviewExpanded ? "Agrandar chat" : "Ampliar cámara" }}</button>
+            <div v-if="isLive && !reconnecting" class="absolute right-3 top-3 z-10 flex gap-2 lg:hidden">
+              <button type="button" class="focus-ring bg-porcelain/95 px-3 py-2 text-xs font-bold text-charcoal shadow-lg" @click="mobilePanel = 'chat'">Ampliar chat</button>
+              <button type="button" class="focus-ring grid size-9 place-items-center bg-porcelain/95 text-charcoal shadow-lg" aria-label="Pausar y cerrar estudio" @click="closeStudio"><PhX :size="19" /></button>
+            </div>
             <div v-if="reconnecting" class="absolute inset-0 grid place-items-center bg-charcoal/80 px-6 text-center text-porcelain"><div><PhArrowsClockwise :size="46" class="mx-auto" /><p class="mt-3 font-display text-2xl font-bold">Recuperando la señal…</p><button type="button" class="focus-ring mt-4 bg-blush px-4 py-3 font-bold text-charcoal" :disabled="connecting" @click="resumeBroadcast()">Reanudar ahora</button></div></div>
             <div v-if="cameraPaused" class="absolute inset-0 grid place-items-center bg-charcoal text-porcelain"><div class="text-center"><PhVideoCameraSlash :size="58" class="mx-auto" /><p class="mt-3 font-semibold">Cámara pausada</p></div></div>
           </div>
 
-          <div class="grid grid-cols-4 border-t-2 border-charcoal">
+          <div class="grid grid-cols-4 border-t-2 border-charcoal" :class="isLive && mobilePanel === 'camera' ? 'absolute inset-x-0 bottom-0 z-10 bg-porcelain/95 backdrop-blur-sm lg:static lg:bg-transparent' : ''">
             <button type="button" class="live-control focus-ring" :class="muted && 'bg-blush'" :disabled="!hasAudio" @click="toggleMute"><PhMicrophoneSlash v-if="muted" :size="23" /><PhMicrophone v-else :size="23" /><span>{{ hasAudio ? (muted ? "Activar" : "Silenciar") : "Sin audio" }}</span></button>
             <button type="button" class="live-control focus-ring" :class="cameraPaused && 'bg-blush'" @click="toggleCamera"><PhVideoCameraSlash v-if="cameraPaused" :size="23" /><PhVideoCamera v-else :size="23" /><span>Cámara</span></button>
             <button type="button" class="live-control focus-ring" :disabled="switchingCamera || requestingCamera || !hasMedia" @click="switchCamera"><PhArrowsClockwise :size="23" /><span>{{ switchingCamera ? "Cambiando…" : "Cambiar" }}</span></button>
@@ -545,7 +548,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <aside class="min-w-0 p-3 sm:p-4 lg:p-7" :class="isLive ? 'flex min-h-0 flex-1 flex-col overflow-hidden lg:block lg:overflow-visible' : ''">
+        <aside class="min-w-0 p-3 sm:p-4 lg:p-7" :class="isLive ? (mobilePanel === 'camera' ? 'hidden lg:block lg:overflow-visible' : 'flex h-full min-h-0 flex-1 flex-col overflow-hidden lg:block lg:h-auto lg:overflow-visible') : ''">
           <template v-if="!isLive">
             <label class="field-label">Título del directo<input ref="titleInput" v-model="title" maxlength="80" class="field-input" placeholder="Ej: Ñoquis en familia" /></label>
             <label class="field-label mt-5">Descripción<textarea v-model="description" maxlength="280" rows="5" class="field-input resize-none" placeholder="Contá qué vas a cocinar, para quién o qué pueden preguntarte." /></label>
@@ -558,7 +561,10 @@ onBeforeUnmount(() => {
           <template v-else>
             <div class="flex min-w-0 items-center justify-between gap-3">
               <h3 class="min-w-0 truncate font-display text-xl font-bold sm:text-2xl lg:text-3xl">{{ live.title }}</h3>
-              <span class="shrink-0 text-xs font-bold uppercase tracking-[0.12em] text-olive-dark lg:hidden">Chat en vivo</span>
+              <div class="flex shrink-0 items-center gap-2 lg:hidden">
+                <button type="button" class="focus-ring inline-flex min-h-9 items-center gap-1.5 bg-blush px-3 text-xs font-bold" @click="mobilePanel = 'camera'"><PhCamera :size="17" /> Ampliar cámara</button>
+                <button type="button" class="focus-ring grid size-9 place-items-center border-2 border-charcoal" aria-label="Pausar y cerrar estudio" @click="closeStudio"><PhX :size="18" /></button>
+              </div>
             </div>
             <p v-if="live.description" class="mt-2 hidden line-clamp-2 break-words text-sm leading-relaxed text-charcoal/65 lg:block">{{ live.description }}</p>
             <div class="mt-2 grid grid-cols-3 border-2 border-charcoal bg-cream text-center lg:mt-5">
