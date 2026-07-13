@@ -295,6 +295,12 @@ export const api = {
     return { live: demoLive };
   },
 
+  async readyLive(liveId) {
+    if (!useDemo) return request(`/api/live/${encodeURIComponent(liveId)}/ready`, { method: "POST", body: "{}" });
+    if (demoLive?.id === liveId) demoLive.status = "live";
+    return { live: demoLive };
+  },
+
   async liveBroadcasterHeartbeat(liveId) {
     if (!useDemo) return request(`/api/live/${encodeURIComponent(liveId)}/broadcaster-heartbeat`, { method: "POST", body: "{}" });
     return { ok: true };

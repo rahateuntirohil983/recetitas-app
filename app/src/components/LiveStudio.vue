@@ -49,6 +49,7 @@ let mediaStream = null;
 let publisher = null;
 let heartbeatTimer = null;
 let eventsTimer = null;
+let publishDisconnectTimer = null;
 
 const canStart = computed(() => Boolean(hasMedia.value && title.value.trim().length >= 3 && !connecting.value && !requestingCamera.value));
 const startHint = computed(() => {
@@ -73,6 +74,22 @@ const refreshDevices = async () => {
   const current = mediaStream?.getVideoTracks()[0]?.getSettings()?.deviceId;
   if (current) selectedCamera.value = current;
 };
+
+const cameraPosition = (camera) => {
+  const label = String(camera?.label || "").toLowerCase();
+  if (/front|user|frontal/.test(label)) return "user";
+  if (/back|rear|environment|trasera/.test(label)) return "environment";
+  return "";
+};
+
+const cameraOrder = (camera) => {
+  const match = String(camera?.label || "").match(/camera\s*(\d+)/i);
+  return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
+};
+
+const preferredCameras = (position) => cameras.value
+  .filter((camera) => cameraPosition(camera) === position)
+  .sort((left, right) => cameraOrder(left) - cameraOrder(right));
 
 const updateTorchSupport = () => {
   const track = mediaStream?.getVideoTracks()[0];
@@ -187,26 +204,14 @@ const replaceCamera = async (constraintOptions, intendedFacing = "") => {
 
 const switchCamera = async () => {
   const currentSettings = mediaStream?.getVideoTracks()[0]?.getSettings?.() || {};
-  const currentFacing = currentSettings.facingMode;
-  if (currentFacing) {
-    const nextFacing = currentFacing === "environment" ? "user" : "environment";
-    await replaceCamera([
-      { facingMode: { exact: nextFacing } },
-      { facingMode: { ideal: nextFacing } },
-    ], nextFacing);
-    return;
-  }
-  if (cameras.value.length > 1) {
-    const index = Math.max(0, cameras.value.findIndex((camera) => camera.deviceId === selectedCamera.value));
-    const next = cameras.value[(index + 1) % cameras.value.length];
-    await replaceCamera([{ deviceId: { exact: next.deviceId } }]);
-    return;
-  }
-  errorMessage.value = "Este dispositivo informa una sola cámara.";
-};
-
-const chooseCamera = async () => {
-  if (selectedCamera.value) await replaceCamera([{ deviceId: { exact: selectedCamera.value } }]);
+  const selected = cameras.value.find((camera) => camera.deviceId === currentSettings.deviceId);
+  const currentFacing = currentSettings.facingMode || cameraPosition(selected) || facing.value;
+  const nextFacing = currentFacing === "environment" ? "user" : "environment";
+  const preferred = preferredCameras(nextFacing);
+  const constraints = preferred.length
+    ? preferred.map((camera) => ({ deviceId: { exact: camera.deviceId } }))
+    : [{ facingMode: { exact: nextFacing } }, { facingMode: { ideal: nextFacing } }];
+  await replaceCamera(constraints, nextFacing);
 };
 
 const toggleTorch = async () => {
@@ -250,6 +255,18 @@ const beginTimers = () => {
   eventsTimer = window.setInterval(refreshEvents, 1800);
 };
 
+const handlePublisherState = (state) => {
+  if (state === "connected") {
+    window.clearTimeout(publishDisconnectTimer);
+    publishDisconnectTimer = null;
+    return;
+  }
+  if (!["failed", "disconnected"].includes(state) || !isLive.value) return;
+  errorMessage.value = "La conexión del directo se interrumpió. Volvé a iniciarlo cuando recuperes internet.";
+  window.clearTimeout(publishDisconnectTimer);
+  publishDisconnectTimer = window.setTimeout(() => finish(true), state === "failed" ? 0 : 5000);
+};
+
 const startLive = async () => {
   if (connecting.value || requestingCamera.value) return;
   if (title.value.trim().length < 3) {
@@ -267,15 +284,15 @@ const startLive = async () => {
   let started = null;
   try {
     started = await api.startLive({ title: title.value, description: description.value });
+    live.value = started.live;
     publisher = new WhipPublisher({
       endpoint: started.publishUrl,
       token: started.publishToken,
-      onState: (state) => {
-        if (["failed", "disconnected"].includes(state) && isLive.value) errorMessage.value = "La conexión del directo se interrumpió. Revisá tu internet.";
-      },
+      onState: handlePublisherState,
     });
     await publisher.connect(mediaStream);
-    live.value = started.live;
+    const ready = await api.readyLive(started.live.id);
+    live.value = ready.live;
     comments.value = started.comments || [];
     isLive.value = true;
     beginTimers();
@@ -347,6 +364,8 @@ const stopTimers = () => {
   window.clearInterval(eventsTimer);
   heartbeatTimer = null;
   eventsTimer = null;
+  window.clearTimeout(publishDisconnectTimer);
+  publishDisconnectTimer = null;
 };
 
 const stopMedia = () => {
@@ -390,6 +409,7 @@ const closeStudio = async () => {
 onMounted(requestInitialCamera);
 onBeforeUnmount(() => {
   stopTimers();
+  if (live.value && ["starting", "live"].includes(live.value.status)) api.endLive(live.value.id).catch(() => null);
   publisher?.close();
   stopMedia();
 });
@@ -415,15 +435,11 @@ onBeforeUnmount(() => {
             <div v-if="cameraPaused" class="absolute inset-0 grid place-items-center bg-charcoal text-porcelain"><div class="text-center"><PhVideoCameraSlash :size="58" class="mx-auto" /><p class="mt-3 font-semibold">Cámara pausada</p></div></div>
           </div>
 
-          <div class="grid grid-cols-4 border-t-2 border-charcoal sm:grid-cols-5">
+          <div class="grid grid-cols-4 border-t-2 border-charcoal">
             <button type="button" class="live-control focus-ring" :class="muted && 'bg-blush'" :disabled="!hasAudio" @click="toggleMute"><PhMicrophoneSlash v-if="muted" :size="23" /><PhMicrophone v-else :size="23" /><span>{{ hasAudio ? (muted ? "Activar" : "Silenciar") : "Sin audio" }}</span></button>
             <button type="button" class="live-control focus-ring" :class="cameraPaused && 'bg-blush'" @click="toggleCamera"><PhVideoCameraSlash v-if="cameraPaused" :size="23" /><PhVideoCamera v-else :size="23" /><span>Cámara</span></button>
             <button type="button" class="live-control focus-ring" :disabled="switchingCamera || requestingCamera || !hasMedia" @click="switchCamera"><PhArrowsClockwise :size="23" /><span>{{ switchingCamera ? "Cambiando…" : "Cambiar" }}</span></button>
             <button type="button" class="live-control focus-ring" :class="torchOn && 'bg-olive'" :disabled="!torchAvailable" @click="toggleTorch"><PhFlashlight :size="23" /><span>Flash</span></button>
-            <label v-if="cameras.length > 1" class="col-span-4 grid gap-1 border-t-2 border-charcoal px-4 py-3 text-xs font-bold sm:col-span-1 sm:border-l-2 sm:border-t-0">
-              Cámara
-              <select v-model="selectedCamera" class="min-w-0 bg-transparent text-sm font-normal" @change="chooseCamera"><option v-for="(camera, index) in cameras" :key="camera.deviceId" :value="camera.deviceId">{{ camera.label || `Cámara ${index + 1}` }}</option></select>
-            </label>
           </div>
         </div>
 
