@@ -5,8 +5,10 @@ import {
   PhBookmarkSimple,
   PhChatCircleDots,
   PhClock,
+  PhClockCounterClockwise,
   PhCookingPot,
   PhHeart,
+  PhPencilSimple,
   PhTrash,
   PhUsers,
 } from "@phosphor-icons/vue";
@@ -19,9 +21,10 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
 });
 
-defineEmits(["back", "profile", "tag", "like", "save", "comments", "delete"]);
+defineEmits(["back", "profile", "tag", "edit", "history", "like", "save", "comments", "delete"]);
 
 const canDelete = computed(() => Boolean(props.viewerId && props.recipe?.author?.id === props.viewerId));
+const formatDate = (value) => new Intl.DateTimeFormat("es-AR", { day: "numeric", month: "short", year: "numeric" }).format(new Date(value));
 </script>
 
 <template>
@@ -66,6 +69,11 @@ const canDelete = computed(() => Boolean(props.viewerId && props.recipe?.author?
           <button v-for="tag in recipe.tags" :key="tag" type="button" class="focus-ring bg-cream px-3 py-2 text-sm font-semibold text-olive-dark transition hover:bg-olive hover:text-charcoal" @click="$emit('tag', tag)">#{{ tag }}</button>
         </div>
 
+        <div v-if="recipe.editCount" class="mt-6 flex flex-wrap items-center justify-between gap-4 border-2 border-charcoal/20 bg-cream px-4 py-4">
+          <div class="min-w-0"><p class="text-xs font-bold uppercase tracking-[0.14em] text-olive-dark">Editada {{ formatDate(recipe.updatedAt) }}</p><p class="mt-1 break-words text-sm text-charcoal/70">{{ recipe.lastEditNote }}</p></div>
+          <button type="button" class="focus-ring inline-flex min-h-10 shrink-0 items-center gap-2 px-3 text-sm font-bold hover:bg-blush" @click="$emit('history', recipe)"><PhClockCounterClockwise :size="19" /> {{ recipe.editCount }} {{ recipe.editCount === 1 ? 'cambio' : 'cambios' }}</button>
+        </div>
+
         <section v-if="recipe.videoUrl && recipe.imageUrl" class="mt-8 border-t-2 border-charcoal/15 pt-8">
           <p class="text-xs font-bold uppercase tracking-[0.17em] text-olive-dark">El resultado</p>
           <h2 class="mt-1 font-display text-3xl font-bold tracking-[-0.04em]">Así queda.</h2>
@@ -105,6 +113,7 @@ const canDelete = computed(() => Boolean(props.viewerId && props.recipe?.author?
             </button>
           </div>
           <div class="flex items-center gap-2">
+            <button v-if="canDelete" type="button" class="social-action focus-ring hover:!bg-olive" @click="$emit('edit', recipe)"><PhPencilSimple :size="21" aria-hidden="true" /> Editar</button>
             <button v-if="canDelete" type="button" class="social-action focus-ring hover:!bg-blush" @click="$emit('delete', recipe)"><PhTrash :size="21" aria-hidden="true" /> Eliminar</button>
             <button type="button" :aria-pressed="recipe.saved" class="social-action focus-ring" :class="recipe.saved && 'social-action--saved'" @click="$emit('save', recipe)">
               <PhBookmarkSimple :size="22" :weight="recipe.saved ? 'fill' : 'regular'" aria-hidden="true" /> {{ recipe.saved ? "Guardada" : "Guardar" }}

@@ -14,7 +14,7 @@ const props = defineProps({
   busy: { type: Boolean, default: false },
 });
 
-defineEmits(["tag", "profile", "follow", "open", "like", "save", "comments"]);
+defineEmits(["tag", "profile", "follow", "open", "edit", "like", "save", "comments"]);
 const search = ref("");
 
 const term = computed(() => search.value.trim().toLowerCase().replace(/^#/, ""));
@@ -83,6 +83,7 @@ const visibleRecipes = computed(() => !term.value ? props.recipes : props.recipe
           :recipe="recipe"
           :viewer-id="viewerId"
           @open="$emit('open', $event)"
+          @edit="$emit('edit', $event)"
           @tag="$emit('tag', $event)"
           @like="$emit('like', $event)"
           @save="$emit('save', $event)"

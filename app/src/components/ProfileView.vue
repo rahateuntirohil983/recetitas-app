@@ -11,7 +11,7 @@ defineProps({
   busy: { type: Boolean, default: false },
 });
 
-defineEmits(["back", "edit", "follow", "connections", "open", "tag", "like", "save", "comments", "profile", "delete"]);
+defineEmits(["back", "edit", "edit-recipe", "follow", "connections", "open", "tag", "like", "save", "comments", "profile", "delete"]);
 </script>
 
 <template>
@@ -78,6 +78,7 @@ defineEmits(["back", "edit", "follow", "connections", "open", "tag", "like", "sa
           :show-follow="false"
           :can-delete="profile.isOwnProfile"
           @open="$emit('open', $event)"
+          @edit="$emit('edit-recipe', $event)"
           @tag="$emit('tag', $event)"
           @like="$emit('like', $event)"
           @save="$emit('save', $event)"

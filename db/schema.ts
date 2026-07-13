@@ -5,6 +5,8 @@ export const tables = {
   bookmarks: "bookmarks",
   comments: "comments",
   recipeTags: "recipe_tags",
+  recipeEdits: "recipe_edits",
+  notifications: "notifications",
   follows: "follows",
   credentials: "credentials",
   sessions: "sessions",

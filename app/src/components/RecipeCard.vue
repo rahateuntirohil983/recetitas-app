@@ -6,6 +6,7 @@ import {
   PhCookingPot,
   PhHeart,
   PhArrowRight,
+  PhPencilSimple,
   PhTrash,
   PhUsers,
 } from "@phosphor-icons/vue";
@@ -18,7 +19,7 @@ defineProps({
   showFollow: { type: Boolean, default: true },
   canDelete: { type: Boolean, default: false },
 });
-const emit = defineEmits(["open", "tag", "like", "save", "comments", "profile", "follow", "delete"]);
+const emit = defineEmits(["open", "edit", "tag", "like", "save", "comments", "profile", "follow", "delete"]);
 
 const openCard = (event, recipe) => {
   if (event.target !== event.currentTarget && event.target.closest("button, a, input, textarea, select")) return;
@@ -72,6 +73,7 @@ const openCard = (event, recipe) => {
         {{ recipe.title }}
       </h2>
       <p class="mt-3 min-w-0 break-words [overflow-wrap:anywhere] text-base leading-relaxed text-charcoal/72">{{ recipe.summary }}</p>
+      <p v-if="recipe.editCount" class="mt-3 border-l-4 border-olive pl-3 text-sm text-charcoal/58"><strong class="text-charcoal/75">Editada</strong><span v-if="recipe.lastEditNote"> · {{ recipe.lastEditNote }}</span></p>
       <div v-if="recipe.tags?.length" class="mt-4 flex flex-wrap gap-2">
         <button v-for="tag in recipe.tags" :key="tag" type="button" class="focus-ring bg-cream px-3 py-2 text-sm font-semibold text-olive-dark transition hover:bg-olive hover:text-charcoal" @click="$emit('tag', tag)">#{{ tag }}</button>
       </div>
@@ -88,6 +90,9 @@ const openCard = (event, recipe) => {
           </button>
         </div>
         <div class="flex items-center gap-2">
+          <button v-if="viewerId === recipe.author.id" type="button" class="social-action focus-ring hover:!bg-olive" aria-label="Editar receta" @click="$emit('edit', recipe)">
+            <PhPencilSimple :size="21" aria-hidden="true" /><span class="hidden sm:inline">Editar</span>
+          </button>
           <button v-if="canDelete" type="button" class="social-action focus-ring hover:!bg-blush" aria-label="Eliminar receta" @click="$emit('delete', recipe)">
             <PhTrash :size="21" aria-hidden="true" /><span class="hidden sm:inline">Eliminar</span>
           </button>

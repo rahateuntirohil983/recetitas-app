@@ -5,6 +5,7 @@ let demoAuthenticated = false;
 let demoCurrentUser = structuredClone(demoUser);
 let recipes = structuredClone(demoRecipes);
 let comments = structuredClone(demoComments);
+let recipeEdits = {};
 const followedUsers = new Set();
 
 const pause = (duration = 180) => new Promise((resolve) => setTimeout(resolve, duration));
@@ -161,6 +162,23 @@ export const api = {
     return { recipe };
   },
 
+  async updateRecipe(recipeId, payload) {
+    if (!useDemo) return request(`/api/recipes/${encodeURIComponent(recipeId)}`, { method: "PATCH", body: JSON.stringify(payload) });
+    if (!demoAuthenticated) throw Object.assign(new Error("Iniciá sesión para modificar recetas."), { status: 401 });
+    const recipe = findRecipe(recipeId);
+    if (!recipe || recipe.author.id !== demoCurrentUser.id) throw Object.assign(new Error("Solo podés modificar tus recetas."), { status: 403 });
+    Object.assign(recipe, payload, { updatedAt: new Date().toISOString(), editCount: Number(recipe.editCount || 0) + 1, lastEditNote: payload.editNote });
+    recipeEdits[recipeId] = [{ id: `edit_${crypto.randomUUID()}`, note: payload.editNote, createdAt: recipe.updatedAt }, ...(recipeEdits[recipeId] || [])];
+    await pause(220);
+    return { recipe };
+  },
+
+  async recipeEdits(recipeId) {
+    if (!useDemo) return request(`/api/recipes/${encodeURIComponent(recipeId)}/edits`);
+    await pause(120);
+    return { edits: recipeEdits[recipeId] || [] };
+  },
+
   async recipe(recipeId) {
     if (!useDemo) return request(`/api/recipes/${encodeURIComponent(recipeId)}`);
     await pause();
@@ -248,5 +266,28 @@ export const api = {
     delete comments[recipeId];
     await pause(160);
     return null;
+  },
+
+  async notifications() {
+    if (!useDemo) return request("/api/notifications");
+    await pause(120);
+    return { unreadCount: 0, items: [] };
+  },
+
+  async notificationCount() {
+    if (!useDemo) return request("/api/notifications/count");
+    return { unreadCount: 0 };
+  },
+
+  async readNotification(notificationId) {
+    if (!useDemo) return request(`/api/notifications/${encodeURIComponent(notificationId)}/read`, { method: "POST", body: "{}" });
+    await pause(80);
+    return { unreadCount: 0 };
+  },
+
+  async readAllNotifications() {
+    if (!useDemo) return request("/api/notifications/read-all", { method: "POST", body: "{}" });
+    await pause(80);
+    return { unreadCount: 0 };
   },
 };

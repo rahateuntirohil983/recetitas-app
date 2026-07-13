@@ -1,6 +1,7 @@
 <script setup>
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, defineAsyncComponent, onMounted, ref, watch } from "vue";
 import {
+  PhBell,
   PhBookmarkSimple,
   PhCompass,
   PhHouse,
@@ -10,17 +11,20 @@ import {
   PhUserCircle,
 } from "@phosphor-icons/vue";
 import AppBrand from "./components/AppBrand.vue";
-import CommentsPanel from "./components/CommentsPanel.vue";
-import ComposerModal from "./components/ComposerModal.vue";
-import ConnectionsPanel from "./components/ConnectionsPanel.vue";
-import DiscoverView from "./components/DiscoverView.vue";
-import EditProfileModal from "./components/EditProfileModal.vue";
-import LoginPanel from "./components/LoginPanel.vue";
-import ProfileView from "./components/ProfileView.vue";
 import PigAvatar from "./components/PigAvatar.vue";
 import RecipeCard from "./components/RecipeCard.vue";
-import RecipeDetailView from "./components/RecipeDetailView.vue";
 import { api } from "./lib/api.js";
+
+const CommentsPanel = defineAsyncComponent(() => import("./components/CommentsPanel.vue"));
+const ComposerModal = defineAsyncComponent(() => import("./components/ComposerModal.vue"));
+const ConnectionsPanel = defineAsyncComponent(() => import("./components/ConnectionsPanel.vue"));
+const DiscoverView = defineAsyncComponent(() => import("./components/DiscoverView.vue"));
+const EditHistoryPanel = defineAsyncComponent(() => import("./components/EditHistoryPanel.vue"));
+const EditProfileModal = defineAsyncComponent(() => import("./components/EditProfileModal.vue"));
+const LoginPanel = defineAsyncComponent(() => import("./components/LoginPanel.vue"));
+const NotificationsPanel = defineAsyncComponent(() => import("./components/NotificationsPanel.vue"));
+const ProfileView = defineAsyncComponent(() => import("./components/ProfileView.vue"));
+const RecipeDetailView = defineAsyncComponent(() => import("./components/RecipeDetailView.vue"));
 
 const loading = ref(true);
 const session = ref({ authenticated: false, user: null, loginUrl: "/app/?login=1" });
@@ -34,6 +38,9 @@ const selectedDiscoverTag = ref("");
 const loginOpen = ref(false);
 const composerOpen = ref(false);
 const composerKey = ref(0);
+const editorOpen = ref(false);
+const editorKey = ref(0);
+const editingRecipe = ref(null);
 const commentsOpen = ref(false);
 const selectedRecipe = ref(null);
 const recipeLoading = ref(false);
@@ -50,6 +57,13 @@ const connectionsOpen = ref(false);
 const connectionsType = ref("followers");
 const connectionsPeople = ref([]);
 const connectionsLoading = ref(false);
+const notificationsOpen = ref(false);
+const notifications = ref([]);
+const notificationsLoading = ref(false);
+const unreadNotifications = ref(0);
+const editHistoryOpen = ref(false);
+const editHistory = ref([]);
+const editHistoryLoading = ref(false);
 
 watch(loginOpen, (open) => {
   if (open) authError.value = "";
@@ -129,6 +143,7 @@ const authenticate = async ({ mode, payload }) => {
   authError.value = "";
   try {
     session.value = mode === "register" ? await api.register(payload) : await api.login(payload);
+    unreadNotifications.value = Number(session.value.unreadNotifications || 0);
     loginOpen.value = false;
     if (activeView.value === "profile" && profile.value) await openProfile(profile.value.handle, false);
     flash(mode === "register" ? "Tu recetario ya está listo." : "Qué bueno verte de nuevo.");
@@ -141,6 +156,8 @@ const authenticate = async ({ mode, payload }) => {
 
 const logout = async () => {
   session.value = await api.logout();
+  unreadNotifications.value = 0;
+  notifications.value = [];
   flash("Cerraste sesión.");
   if (["saved", "profile"].includes(activeView.value)) await loadView("feed");
 };
@@ -349,12 +366,117 @@ const deleteComment = async (comment) => {
   }
 };
 
+const startEditingRecipe = (recipe) => {
+  if (!session.value.authenticated) {
+    loginOpen.value = true;
+    return;
+  }
+  if (recipe.author.id !== session.value.user.id) return;
+  editingRecipe.value = recipe;
+  editorKey.value += 1;
+  editorOpen.value = true;
+};
+
+const uploadRecipeMedia = async (payload) => {
+  const { imageFile, videoFile, ...recipePayload } = payload;
+  if (videoFile) recipePayload.videoUrl = (await api.uploadVideo(videoFile)).videoUrl;
+  if (imageFile) recipePayload.imageUrl = (await api.uploadImage(imageFile)).imageUrl;
+  return recipePayload;
+};
+
+const saveRecipeEdit = async (payload) => {
+  if (!editingRecipe.value) return;
+  busy.value = true;
+  try {
+    const recipePayload = await uploadRecipeMedia(payload);
+    const response = await api.updateRecipe(editingRecipe.value.id, recipePayload);
+    replaceRecipe(response.recipe);
+    editingRecipe.value = response.recipe;
+    editorOpen.value = false;
+    flash("Los cambios ya están visibles.");
+  } catch (failure) {
+    if (failure.status === 401) {
+      editorOpen.value = false;
+      loginOpen.value = true;
+    }
+    flash(failure.message);
+  } finally {
+    busy.value = false;
+  }
+};
+
+const openEditHistory = async (recipe) => {
+  selectedRecipe.value = recipe;
+  editHistory.value = [];
+  editHistoryLoading.value = true;
+  editHistoryOpen.value = true;
+  try {
+    editHistory.value = (await api.recipeEdits(recipe.id)).edits;
+  } catch (failure) {
+    flash(failure.message);
+    editHistoryOpen.value = false;
+  } finally {
+    editHistoryLoading.value = false;
+  }
+};
+
+const refreshNotificationCount = async () => {
+  if (!session.value.authenticated || document.hidden) return;
+  try {
+    unreadNotifications.value = Number((await api.notificationCount()).unreadCount || 0);
+  } catch {
+    // A background refresh should never interrupt the current view.
+  }
+};
+
+const openNotifications = async () => {
+  if (!session.value.authenticated) {
+    loginOpen.value = true;
+    return;
+  }
+  notificationsOpen.value = true;
+  notificationsLoading.value = true;
+  try {
+    const response = await api.notifications();
+    notifications.value = response.items;
+    unreadNotifications.value = response.unreadCount;
+  } catch (failure) {
+    flash(failure.message);
+    notificationsOpen.value = false;
+  } finally {
+    notificationsLoading.value = false;
+  }
+};
+
+const readAllNotifications = async () => {
+  try {
+    await api.readAllNotifications();
+    unreadNotifications.value = 0;
+    notifications.value = notifications.value.map((item) => ({ ...item, read: true }));
+  } catch (failure) {
+    flash(failure.message);
+  }
+};
+
+const openNotification = async (notification) => {
+  if (!notification.read) {
+    try {
+      const response = await api.readNotification(notification.id);
+      unreadNotifications.value = response.unreadCount;
+      notifications.value = notifications.value.map((item) => item.id === notification.id ? { ...item, read: true } : item);
+    } catch (failure) {
+      flash(failure.message);
+    }
+  }
+  notificationsOpen.value = false;
+  if (notification.recipeId) openRecipe(notification.recipeId);
+  else openProfile(notification.actor.handle);
+};
+
 const publishRecipe = async (payload) => {
   busy.value = true;
   try {
-    const { imageFile, videoFile, ...recipePayload } = payload;
-    if (videoFile) recipePayload.videoUrl = (await api.uploadVideo(videoFile)).videoUrl;
-    if (imageFile) recipePayload.imageUrl = (await api.uploadImage(imageFile)).imageUrl;
+    const recipePayload = await uploadRecipeMedia(payload);
     const response = await api.createRecipe(recipePayload);
     recipes.value = [response.recipe, ...recipes.value];
     composerOpen.value = false;
@@ -376,6 +498,7 @@ const publishRecipe = async (payload) => {
 onMounted(async () => {
   try {
     session.value = await api.session();
+    unreadNotifications.value = Number(session.value.unreadNotifications || 0);
     const params = new URLSearchParams(window.location.search);
     const requestedView = ["saved", "discover"].includes(params.get("view")) ? params.get("view") : "feed";
     selectedDiscoverTag.value = params.get("tag") || "";
@@ -386,6 +509,9 @@ onMounted(async () => {
     else await loadView(requestedView, false);
     if (["1", "register"].includes(params.get("login"))) loginOpen.value = true;
     if (params.get("compose") === "1") startPublishing();
+
+    window.addEventListener("focus", refreshNotificationCount);
+    document.addEventListener("visibilitychange", refreshNotificationCount);
 
     window.addEventListener("popstate", () => {
       const profileMatch = window.location.pathname.match(/^\/app\/u\/([a-z0-9_]{3,24})\/?$/i);
@@ -414,6 +540,7 @@ onMounted(async () => {
         <button type="button" class="side-nav" :class="activeView === 'feed' && 'side-nav--active'" @click="loadView('feed')"><PhHouse :size="22" /> Para vos</button>
         <button type="button" class="side-nav" :class="activeView === 'discover' && 'side-nav--active'" @click="loadDiscover()"><PhCompass :size="22" /> Descubrir</button>
         <button type="button" class="side-nav" :class="activeView === 'saved' && 'side-nav--active'" @click="loadView('saved')"><PhBookmarkSimple :size="22" /> Guardadas</button>
+        <button v-if="session.authenticated" type="button" class="side-nav relative" @click="openNotifications"><PhBell :size="22" /> Notificaciones <span v-if="unreadNotifications" class="ml-auto grid min-w-6 place-items-center rounded-full bg-blush px-1.5 py-0.5 text-xs font-bold text-charcoal">{{ unreadNotifications > 99 ? '99+' : unreadNotifications }}</span></button>
         <button type="button" class="side-nav" :class="activeView === 'profile' && profile?.isOwnProfile && 'side-nav--active'" @click="openOwnProfile"><PhUserCircle :size="22" /> Mi perfil</button>
       </nav>
 
@@ -436,6 +563,7 @@ onMounted(async () => {
     <header class="sticky top-0 z-20 flex h-[72px] items-center justify-between border-b-2 border-charcoal bg-charcoal px-4 text-porcelain lg:hidden">
       <AppBrand compact />
       <div class="flex items-center gap-2">
+        <button v-if="session.authenticated" type="button" class="focus-ring relative grid size-11 place-items-center border border-porcelain/30 text-porcelain" aria-label="Abrir notificaciones" @click="openNotifications"><PhBell :size="21" /><span v-if="unreadNotifications" class="absolute -right-1 -top-1 grid min-w-5 place-items-center rounded-full bg-blush px-1 text-[10px] font-bold text-charcoal">{{ unreadNotifications > 9 ? '9+' : unreadNotifications }}</span></button>
         <button type="button" class="focus-ring grid size-11 place-items-center border border-porcelain/30 text-porcelain" :class="activeView === 'discover' && 'bg-olive text-charcoal'" aria-label="Descubrir recetas" @click="loadDiscover()"><PhCompass :size="22" /></button>
         <button type="button" class="focus-ring grid size-11 place-items-center bg-blush text-charcoal" aria-label="Compartir una receta" @click="startPublishing"><PhPlus :size="22" weight="bold" /></button>
       </div>
@@ -478,7 +606,7 @@ onMounted(async () => {
             </button>
           </div>
           <div v-else class="grid gap-7">
-            <RecipeCard v-for="recipe in filteredRecipes" :key="recipe.id" :recipe="recipe" :viewer-id="session.user?.id || ''" @open="openRecipe" @tag="loadDiscover" @like="actOnRecipe($event, 'like')" @save="actOnRecipe($event, 'save')" @comments="openComments" @profile="openProfile" @follow="toggleFollow" />
+            <RecipeCard v-for="recipe in filteredRecipes" :key="recipe.id" :recipe="recipe" :viewer-id="session.user?.id || ''" @open="openRecipe" @edit="startEditingRecipe" @tag="loadDiscover" @like="actOnRecipe($event, 'like')" @save="actOnRecipe($event, 'save')" @comments="openComments" @profile="openProfile" @follow="toggleFollow" />
           </div>
         </section>
 
@@ -517,6 +645,7 @@ onMounted(async () => {
         @profile="openProfile"
         @follow="toggleFollow"
         @open="openRecipe"
+        @edit="startEditingRecipe"
         @like="actOnRecipe($event, 'like')"
         @save="actOnRecipe($event, 'save')"
         @comments="openComments"
@@ -534,6 +663,7 @@ onMounted(async () => {
         @follow="toggleFollow"
         @connections="openConnections"
         @open="openRecipe"
+        @edit-recipe="startEditingRecipe"
         @tag="loadDiscover"
         @like="actOnRecipe($event, 'like')"
         @save="actOnRecipe($event, 'save')"
@@ -550,6 +680,8 @@ onMounted(async () => {
         @back="loadView(lastCollectionView)"
         @profile="openProfile"
         @tag="loadDiscover"
+        @edit="startEditingRecipe"
+        @history="openEditHistory"
         @like="actOnRecipe($event, 'like')"
         @save="actOnRecipe($event, 'save')"
         @comments="openComments"
@@ -565,10 +697,13 @@ onMounted(async () => {
 
     <p v-if="toast" class="fixed bottom-24 left-1/2 z-[70] -translate-x-1/2 bg-charcoal px-5 py-3 text-center text-sm font-semibold text-porcelain shadow-xl lg:bottom-8" role="status" aria-live="polite">{{ toast }}</p>
 
-    <LoginPanel :open="loginOpen" :busy="busy" :error-message="authError" @close="loginOpen = false" @submit="authenticate" />
-    <ComposerModal :key="composerKey" :open="composerOpen" :busy="busy" @close="composerOpen = false" @submit="publishRecipe" />
-    <CommentsPanel :open="commentsOpen" :recipe="selectedRecipe" :comments="comments" :authenticated="session.authenticated" :viewer-id="session.user?.id || ''" :busy="busy" @close="commentsOpen = false" @login="loginOpen = true" @submit="addComment" @delete="deleteComment" />
-    <EditProfileModal :open="editProfileOpen" :profile="profile" :busy="busy" :error-message="editProfileError" @close="editProfileOpen = false" @submit="saveProfile" />
-    <ConnectionsPanel :open="connectionsOpen" :type="connectionsType" :people="connectionsPeople" :loading="connectionsLoading" @close="connectionsOpen = false" @profile="connectionsOpen = false; openProfile($event)" />
+    <LoginPanel v-if="loginOpen" :open="loginOpen" :busy="busy" :error-message="authError" @close="loginOpen = false" @submit="authenticate" />
+    <ComposerModal v-if="composerOpen" :key="composerKey" :open="composerOpen" :busy="busy" @close="composerOpen = false" @submit="publishRecipe" />
+    <ComposerModal v-if="editorOpen" :key="`edit-${editorKey}`" :open="editorOpen" :busy="busy" :recipe="editingRecipe" @close="editorOpen = false" @submit="saveRecipeEdit" />
+    <CommentsPanel v-if="commentsOpen" :open="commentsOpen" :recipe="selectedRecipe" :comments="comments" :authenticated="session.authenticated" :viewer-id="session.user?.id || ''" :busy="busy" @close="commentsOpen = false" @login="loginOpen = true" @submit="addComment" @delete="deleteComment" />
+    <EditProfileModal v-if="editProfileOpen" :open="editProfileOpen" :profile="profile" :busy="busy" :error-message="editProfileError" @close="editProfileOpen = false" @submit="saveProfile" />
+    <ConnectionsPanel v-if="connectionsOpen" :open="connectionsOpen" :type="connectionsType" :people="connectionsPeople" :loading="connectionsLoading" @close="connectionsOpen = false" @profile="connectionsOpen = false; openProfile($event)" />
+    <NotificationsPanel v-if="notificationsOpen" :open="notificationsOpen" :items="notifications" :loading="notificationsLoading" :unread-count="unreadNotifications" @close="notificationsOpen = false" @read-all="readAllNotifications" @open-item="openNotification" />
+    <EditHistoryPanel v-if="editHistoryOpen" :open="editHistoryOpen" :recipe="selectedRecipe" :edits="editHistory" :loading="editHistoryLoading" @close="editHistoryOpen = false" />
   </div>
 </template>

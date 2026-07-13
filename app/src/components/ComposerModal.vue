@@ -2,7 +2,11 @@
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
 import { PhArrowRight, PhImageSquare, PhRecord, PhStopCircle, PhTrash, PhUploadSimple, PhVideoCamera, PhX } from "@phosphor-icons/vue";
 
-const props = defineProps({ open: { type: Boolean, default: false }, busy: { type: Boolean, default: false } });
+const props = defineProps({
+  open: { type: Boolean, default: false },
+  busy: { type: Boolean, default: false },
+  recipe: { type: Object, default: null },
+});
 const emit = defineEmits(["close", "submit"]);
 
 const error = ref("");
@@ -10,14 +14,17 @@ const titleInput = ref(null);
 const summaryInput = ref(null);
 const ingredientsInput = ref(null);
 const stepsInput = ref(null);
-const fieldErrors = reactive({ title: "", summary: "", cookMinutes: "", servings: "", ingredients: "", steps: "" });
+const editNoteInput = ref(null);
+const fieldErrors = reactive({ title: "", summary: "", cookMinutes: "", servings: "", ingredients: "", steps: "", editNote: "" });
 const imageFile = ref(null);
 const imagePreview = ref("");
 const imageError = ref("");
+const existingImageUrl = ref("");
 const mediaMode = ref("image");
 const videoFile = ref(null);
 const videoPreview = ref("");
 const videoError = ref("");
+const existingVideoUrl = ref("");
 const cameraPreview = ref(null);
 const recording = ref(false);
 const recordingSeconds = ref(0);
@@ -36,12 +43,15 @@ const form = reactive({
   tags: "",
   ingredients: "",
   steps: "",
+  editNote: "",
 });
 
 const parsedTags = computed(() => [...new Set(form.tags.split(/[\s,]+/)
   .map((value) => value.trim().replace(/^#+/, ""))
   .filter(Boolean))]
   .slice(0, 5));
+
+const revokePreview = (url) => { if (String(url || "").startsWith("blob:")) URL.revokeObjectURL(url); };
 
 const chooseImage = (event) => {
   const file = event.target.files?.[0] || null;
@@ -57,14 +67,16 @@ const chooseImage = (event) => {
     event.target.value = "";
     return;
   }
-  if (imagePreview.value) URL.revokeObjectURL(imagePreview.value);
+  revokePreview(imagePreview.value);
   imageFile.value = file;
+  existingImageUrl.value = "";
   imagePreview.value = URL.createObjectURL(file);
 };
 
 const clearImage = () => {
-  if (imagePreview.value) URL.revokeObjectURL(imagePreview.value);
+  revokePreview(imagePreview.value);
   imageFile.value = null;
+  existingImageUrl.value = "";
   imagePreview.value = "";
   imageError.value = "";
 };
@@ -83,8 +95,9 @@ const stopCamera = () => {
 };
 
 const clearVideo = () => {
-  if (videoPreview.value) URL.revokeObjectURL(videoPreview.value);
+  revokePreview(videoPreview.value);
   videoFile.value = null;
+  existingVideoUrl.value = "";
   videoPreview.value = "";
   videoError.value = "";
 };
@@ -128,6 +141,7 @@ const setVideoFile = async (file) => {
   }
   clearVideo();
   videoFile.value = file;
+  existingVideoUrl.value = "";
   videoPreview.value = URL.createObjectURL(file);
   return true;
 };
@@ -195,12 +209,54 @@ const startRecording = async () => {
 };
 
 onBeforeUnmount(() => {
-  if (imagePreview.value) URL.revokeObjectURL(imagePreview.value);
-  if (videoPreview.value) URL.revokeObjectURL(videoPreview.value);
+  revokePreview(imagePreview.value);
+  revokePreview(videoPreview.value);
   cancelRecording();
 });
 
-watch(() => props.open, (open) => { if (!open && recording.value) cancelRecording(); });
+const prepareForm = () => {
+  cancelRecording();
+  revokePreview(imagePreview.value);
+  revokePreview(videoPreview.value);
+  imageFile.value = null;
+  videoFile.value = null;
+  imageError.value = "";
+  videoError.value = "";
+  error.value = "";
+  Object.keys(fieldErrors).forEach((field) => { fieldErrors[field] = ""; });
+  const recipe = props.recipe;
+  Object.assign(form, recipe ? {
+    title: recipe.title,
+    summary: recipe.summary,
+    cookMinutes: recipe.cookMinutes,
+    servings: recipe.servings,
+    imageKey: recipe.imageKey || "pumpkin",
+    tags: (recipe.tags || []).map((tag) => `#${tag}`).join(" "),
+    ingredients: (recipe.ingredients || []).join("\n"),
+    steps: (recipe.steps || []).join("\n"),
+    editNote: "",
+  } : {
+    title: "",
+    summary: "",
+    cookMinutes: 35,
+    servings: 4,
+    imageKey: "pumpkin",
+    tags: "",
+    ingredients: "",
+    steps: "",
+    editNote: "",
+  });
+  existingImageUrl.value = recipe?.imageUrl || "";
+  existingVideoUrl.value = recipe?.videoUrl || "";
+  imagePreview.value = existingImageUrl.value;
+  videoPreview.value = existingVideoUrl.value;
+  mediaMode.value = recipe?.videoUrl && !recipe?.imageUrl ? "video" : "image";
+};
+
+watch(() => [props.open, props.recipe?.id], ([open]) => {
+  if (open) prepareForm();
+  else if (recording.value) cancelRecording();
+}, { immediate: true });
 
 [
   ["title", () => form.title],
@@ -209,6 +265,7 @@ watch(() => props.open, (open) => { if (!open && recording.value) cancelRecordin
   ["servings", () => form.servings],
   ["ingredients", () => form.ingredients],
   ["steps", () => form.steps],
+  ["editNote", () => form.editNote],
 ].forEach(([field, source]) => {
   watch(source, () => {
     fieldErrors[field] = "";
@@ -230,6 +287,7 @@ const submit = async () => {
     servings: !Number.isInteger(form.servings) || form.servings < 1 || form.servings > 24 ? "Ingresá entre 1 y 24 porciones." : "",
     ingredients: !ingredients.length ? "Agregá al menos un ingrediente." : "",
     steps: !steps.length ? "Agregá al menos un paso." : "",
+    editNote: props.recipe && form.editNote.trim().length < 3 ? "Contá brevemente qué modificaste." : "",
   });
 
   const firstInvalid = [
@@ -237,16 +295,29 @@ const submit = async () => {
     ["summary", summaryInput],
     ["ingredients", ingredientsInput],
     ["steps", stepsInput],
+    ["editNote", editNoteInput],
   ].find(([field]) => fieldErrors[field]);
 
   if (Object.values(fieldErrors).some(Boolean)) {
-    error.value = "Revisá los campos marcados antes de publicar.";
+    error.value = "Revisá los campos marcados antes de continuar.";
     await nextTick();
     firstInvalid?.[1]?.value?.focus();
     return;
   }
   error.value = "";
-  emit("submit", { ...form, title: form.title.trim(), summary: form.summary.trim(), ingredients, steps, tags, imageFile: imageFile.value, videoFile: videoFile.value });
+  emit("submit", {
+    ...form,
+    title: form.title.trim(),
+    summary: form.summary.trim(),
+    editNote: form.editNote.trim(),
+    ingredients,
+    steps,
+    tags,
+    imageFile: imageFile.value,
+    videoFile: videoFile.value,
+    imageUrl: imageFile.value ? null : existingImageUrl.value || null,
+    videoUrl: videoFile.value ? null : existingVideoUrl.value || null,
+  });
 };
 </script>
 
@@ -257,9 +328,9 @@ const submit = async () => {
         <button type="button" class="focus-ring absolute right-4 top-4 grid size-11 place-items-center border-2 border-charcoal text-charcoal hover:bg-blush" aria-label="Cerrar" @click="$emit('close')">
           <PhX :size="22" aria-hidden="true" />
         </button>
-        <p class="text-sm font-bold uppercase tracking-[0.16em] text-olive-dark">Compartí la tuya</p>
+        <p class="text-sm font-bold uppercase tracking-[0.16em] text-olive-dark">{{ recipe ? 'Actualizá tu receta' : 'Compartí la tuya' }}</p>
         <h2 id="composer-title" class="mt-2 pr-14 font-display text-[clamp(2.7rem,7vw,4.8rem)] font-bold leading-none tracking-[-0.055em] text-charcoal">
-          Nueva receta.
+          {{ recipe ? 'Editar receta.' : 'Nueva receta.' }}
         </h2>
 
         <form class="mt-8 grid gap-5" novalidate @submit.prevent="submit">
@@ -286,8 +357,8 @@ const submit = async () => {
           <div class="field-label">
             Foto y/o video <span class="font-normal text-charcoal/55">Opcionales · podés agregar ambos · video de hasta 35 segundos</span>
             <div class="grid grid-cols-2 border-2 border-charcoal bg-cream p-1">
-              <button type="button" class="focus-ring inline-flex min-h-11 items-center justify-center gap-2 font-semibold" :class="mediaMode === 'image' ? 'bg-charcoal text-porcelain' : 'text-charcoal'" @click="mediaMode = 'image'; cancelRecording()"><PhImageSquare :size="20" /> Foto <span v-if="imageFile" aria-label="Foto elegida">✓</span></button>
-              <button type="button" class="focus-ring inline-flex min-h-11 items-center justify-center gap-2 font-semibold" :class="mediaMode === 'video' ? 'bg-charcoal text-porcelain' : 'text-charcoal'" @click="mediaMode = 'video'"><PhVideoCamera :size="20" /> Video <span v-if="videoFile" aria-label="Video elegido">✓</span></button>
+              <button type="button" class="focus-ring inline-flex min-h-11 items-center justify-center gap-2 font-semibold" :class="mediaMode === 'image' ? 'bg-charcoal text-porcelain' : 'text-charcoal'" @click="mediaMode = 'image'; cancelRecording()"><PhImageSquare :size="20" /> Foto <span v-if="imagePreview" aria-label="Foto elegida">✓</span></button>
+              <button type="button" class="focus-ring inline-flex min-h-11 items-center justify-center gap-2 font-semibold" :class="mediaMode === 'video' ? 'bg-charcoal text-porcelain' : 'text-charcoal'" @click="mediaMode = 'video'"><PhVideoCamera :size="20" /> Video <span v-if="videoPreview" aria-label="Video elegido">✓</span></button>
             </div>
 
             <template v-if="mediaMode === 'image'">
@@ -337,9 +408,16 @@ const submit = async () => {
             <label class="field-label">Pasos, uno por línea<textarea ref="stepsInput" v-model="form.steps" class="field-input min-h-40 resize-y" :class="fieldErrors.steps && 'field-input--error'" required placeholder="Asá los tomates.\nPrepará la masa.\nHorneá hasta dorar." /><span v-if="fieldErrors.steps" class="field-error">{{ fieldErrors.steps }}</span></label>
           </div>
 
+          <label v-if="recipe" class="field-label">
+            ¿Qué modificaste?
+            <textarea ref="editNoteInput" v-model="form.editNote" class="field-input min-h-24 resize-y" :class="fieldErrors.editNote && 'field-input--error'" maxlength="180" required placeholder="Ej.: Ajusté la cantidad de harina y aclaré el tiempo de horno." />
+            <span v-if="fieldErrors.editNote" class="field-error">{{ fieldErrors.editNote }}</span>
+            <span class="font-normal text-charcoal/55">Esta nota quedará visible en el historial de la receta.</span>
+          </label>
+
           <p v-if="error" class="bg-blush px-4 py-3 text-sm font-semibold text-charcoal" role="alert">{{ error }}</p>
           <button type="submit" class="focus-ring mt-2 inline-flex min-h-14 items-center justify-between bg-charcoal px-6 font-semibold text-porcelain hover:bg-olive hover:text-charcoal" :disabled="busy">
-            {{ busy ? "Publicando…" : "Publicar receta" }}
+            {{ busy ? (recipe ? "Guardando…" : "Publicando…") : (recipe ? "Guardar cambios" : "Publicar receta") }}
             <PhArrowRight :size="22" aria-hidden="true" />
           </button>
         </form>

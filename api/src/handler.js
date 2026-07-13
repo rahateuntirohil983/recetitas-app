@@ -25,6 +25,8 @@ const SCHEMA_STATEMENTS = [
     image_key TEXT NOT NULL DEFAULT 'pumpkin',
     image_url TEXT,
     video_url TEXT,
+    updated_at TEXT,
+    edit_count INTEGER NOT NULL DEFAULT 0,
     cook_minutes INTEGER NOT NULL,
     servings INTEGER NOT NULL,
     ingredients_json TEXT NOT NULL,
@@ -56,6 +58,23 @@ const SCHEMA_STATEMENTS = [
     created_at TEXT NOT NULL,
     PRIMARY KEY (recipe_id, tag)
   )`,
+  `CREATE TABLE IF NOT EXISTS recipe_edits (
+    id TEXT PRIMARY KEY,
+    recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+    author_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    note TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS notifications (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    actor_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    type TEXT NOT NULL CHECK (type IN ('like', 'comment', 'follow')),
+    recipe_id TEXT REFERENCES recipes(id) ON DELETE CASCADE,
+    comment_id TEXT REFERENCES comments(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    read_at TEXT
+  )`,
   `CREATE TABLE IF NOT EXISTS follows (
     follower_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     followed_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -85,6 +104,8 @@ const SCHEMA_STATEMENTS = [
   "CREATE INDEX IF NOT EXISTS recipes_author_id_idx ON recipes(author_id)",
   "CREATE INDEX IF NOT EXISTS comments_recipe_id_idx ON comments(recipe_id, created_at)",
   "CREATE INDEX IF NOT EXISTS recipe_tags_tag_idx ON recipe_tags(tag, created_at DESC)",
+  "CREATE INDEX IF NOT EXISTS recipe_edits_recipe_idx ON recipe_edits(recipe_id, created_at DESC)",
+  "CREATE INDEX IF NOT EXISTS notifications_user_idx ON notifications(user_id, read_at, created_at DESC)",
   "CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id)",
   "CREATE INDEX IF NOT EXISTS sessions_expires_at_idx ON sessions(expires_at)",
   "CREATE INDEX IF NOT EXISTS auth_attempts_key_created_idx ON auth_attempts(attempt_key, created_at)",
@@ -307,6 +328,9 @@ const recipeDto = (row) => {
     imageKey: row.image_key,
     imageUrl: legacyVideo ? null : legacyMediaUrl,
     videoUrl: row.video_url || (legacyVideo ? legacyMediaUrl : null),
+    updatedAt: row.updated_at || null,
+    editCount: Number(row.edit_count || 0),
+    lastEditNote: row.last_edit_note || "",
     cookMinutes: Number(row.cook_minutes),
     servings: Number(row.servings),
     ingredients: parseJsonArray(row.ingredients_json),
@@ -346,6 +370,12 @@ const ensureRecipeColumns = async (db) => {
       if (!(columns.results || []).some((column) => column.name === "video_url")) {
         await db.prepare("ALTER TABLE recipes ADD COLUMN video_url TEXT").run();
       }
+      if (!(columns.results || []).some((column) => column.name === "updated_at")) {
+        await db.prepare("ALTER TABLE recipes ADD COLUMN updated_at TEXT").run();
+      }
+      if (!(columns.results || []).some((column) => column.name === "edit_count")) {
+        await db.prepare("ALTER TABLE recipes ADD COLUMN edit_count INTEGER NOT NULL DEFAULT 0").run();
+      }
     })().catch((cause) => {
       recipeColumnsReady = null;
       throw cause;
@@ -357,6 +387,8 @@ const ensureRecipeColumns = async (db) => {
 const cleanupDemoData = async (db) => {
   if (!demoCleanupReady) {
     const statements = [
+      db.prepare("DELETE FROM notifications WHERE user_id LIKE 'user_demo_%' OR actor_id LIKE 'user_demo_%' OR recipe_id LIKE 'recipe_demo_%'"),
+      db.prepare("DELETE FROM recipe_edits WHERE recipe_id LIKE 'recipe_demo_%' OR author_id LIKE 'user_demo_%'"),
       db.prepare("DELETE FROM recipe_tags WHERE recipe_id LIKE 'recipe_demo_%'"),
       db.prepare("DELETE FROM comments WHERE recipe_id LIKE 'recipe_demo_%' OR author_id LIKE 'user_demo_%'"),
       db.prepare("DELETE FROM likes WHERE recipe_id LIKE 'recipe_demo_%' OR user_id LIKE 'user_demo_%'"),
@@ -457,6 +489,7 @@ const getFeed = async (db, viewerId = "", limit = 20, authorId = null, tag = nul
       u.display_name,
       u.avatar_url,
       COALESCE((SELECT json_group_array(rt.tag) FROM recipe_tags rt WHERE rt.recipe_id = r.id), '[]') AS tags_json,
+      (SELECT re.note FROM recipe_edits re WHERE re.recipe_id = r.id ORDER BY re.created_at DESC LIMIT 1) AS last_edit_note,
       (SELECT COUNT(*) FROM likes l WHERE l.recipe_id = r.id) AS like_count,
       (SELECT COUNT(*) FROM comments c WHERE c.recipe_id = r.id) AS comment_count,
       EXISTS(SELECT 1 FROM likes ml WHERE ml.recipe_id = r.id AND ml.user_id = ?) AS liked_by_me,
@@ -480,6 +513,7 @@ const getRecipe = async (db, recipeId, viewerId = "") => {
       u.display_name,
       u.avatar_url,
       COALESCE((SELECT json_group_array(rt.tag) FROM recipe_tags rt WHERE rt.recipe_id = r.id), '[]') AS tags_json,
+      (SELECT re.note FROM recipe_edits re WHERE re.recipe_id = r.id ORDER BY re.created_at DESC LIMIT 1) AS last_edit_note,
       (SELECT COUNT(*) FROM likes l WHERE l.recipe_id = r.id) AS like_count,
       (SELECT COUNT(*) FROM comments c WHERE c.recipe_id = r.id) AS comment_count,
       EXISTS(SELECT 1 FROM likes ml WHERE ml.recipe_id = r.id AND ml.user_id = ?) AS liked_by_me,
@@ -512,6 +546,28 @@ const toggleRelation = async (db, table, userId, recipeId) => {
 };
 
 const canDeleteOwnedComment = (comment, user) => Boolean(comment && user && comment.author_id === user.id);
+
+const createNotification = async (db, { userId, actorId, type, recipeId = null, commentId = null }) => {
+  if (!userId || !actorId || userId === actorId) return;
+  const createdAt = now();
+  await db.batch([
+    db.prepare(`DELETE FROM notifications
+      WHERE user_id = ? AND actor_id = ? AND type = ? AND recipe_id IS ?`)
+      .bind(userId, actorId, type, recipeId),
+    db.prepare(`INSERT INTO notifications
+      (id, user_id, actor_id, type, recipe_id, comment_id, created_at, read_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`)
+      .bind(createId("ntf"), userId, actorId, type, recipeId, commentId, createdAt),
+  ]);
+};
+
+const unreadNotificationCount = async (db, userId) => {
+  if (!userId) return 0;
+  const row = await db.prepare("SELECT COUNT(*) AS count FROM notifications WHERE user_id = ? AND read_at IS NULL")
+    .bind(userId)
+    .first();
+  return Number(row?.count || 0);
+};
 
 const validateRecipe = (body, mediaBaseUrl = "") => {
   const title = cleanText(body.title, 90);
@@ -644,7 +700,7 @@ export async function handleApiRequest(request, env) {
       const token = await createSession(env.DB, userId);
       const user = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first();
       return json(
-        { authenticated: true, user: userDto(user) },
+        { authenticated: true, user: userDto(user), unreadNotifications: 0 },
         201,
         { "set-cookie": sessionCookie(request, token) },
       );
@@ -684,7 +740,7 @@ export async function handleApiRequest(request, env) {
       ]);
       const token = await createSession(env.DB, credential.id);
       return json(
-        { authenticated: true, user: userDto(credential) },
+        { authenticated: true, user: userDto(credential), unreadNotifications: await unreadNotificationCount(env.DB, credential.id) },
         200,
         { "set-cookie": sessionCookie(request, token) },
       );
@@ -701,8 +757,67 @@ export async function handleApiRequest(request, env) {
 
     if (request.method === "GET" && path === "/api/session") {
       return json(viewer
-        ? { authenticated: true, user: userDto(viewer) }
+        ? { authenticated: true, user: userDto(viewer), unreadNotifications: await unreadNotificationCount(env.DB, viewer.id) }
         : { authenticated: false, user: null, loginUrl: "/app/?login=1" });
+    }
+
+    if (request.method === "GET" && path === "/api/notifications/count") {
+      const auth = await requireUser(request, env.DB);
+      if (auth.response) return auth.response;
+      return json({ unreadCount: await unreadNotificationCount(env.DB, auth.user.id) });
+    }
+
+    if (request.method === "GET" && path === "/api/notifications") {
+      const auth = await requireUser(request, env.DB);
+      if (auth.response) return auth.response;
+      const result = await env.DB.prepare(`SELECT
+          n.*, a.handle, a.display_name, a.avatar_url, r.title AS recipe_title
+        FROM notifications n
+        JOIN users a ON a.id = n.actor_id
+        LEFT JOIN recipes r ON r.id = n.recipe_id
+        WHERE n.user_id = ?
+        ORDER BY n.created_at DESC
+        LIMIT 50`)
+        .bind(auth.user.id)
+        .all();
+      return json({
+        unreadCount: await unreadNotificationCount(env.DB, auth.user.id),
+        items: (result.results || []).map((row) => ({
+          id: row.id,
+          type: row.type,
+          recipeId: row.recipe_id || null,
+          recipeTitle: row.recipe_title || "",
+          commentId: row.comment_id || null,
+          createdAt: row.created_at,
+          read: Boolean(row.read_at),
+          actor: {
+            id: row.actor_id,
+            handle: row.handle,
+            displayName: row.display_name,
+            avatarUrl: publicAvatarUrl(row.avatar_url),
+            avatarIndex: avatarIndexForRow({ id: row.actor_id, avatar_url: row.avatar_url }),
+          },
+        })),
+      });
+    }
+
+    if (request.method === "POST" && path === "/api/notifications/read-all") {
+      const auth = await requireUser(request, env.DB);
+      if (auth.response) return auth.response;
+      await env.DB.prepare("UPDATE notifications SET read_at = COALESCE(read_at, ?) WHERE user_id = ?")
+        .bind(now(), auth.user.id)
+        .run();
+      return json({ unreadCount: 0 });
+    }
+
+    const notificationReadMatch = path.match(/^\/api\/notifications\/([^/]+)\/read$/);
+    if (request.method === "POST" && notificationReadMatch) {
+      const auth = await requireUser(request, env.DB);
+      if (auth.response) return auth.response;
+      await env.DB.prepare("UPDATE notifications SET read_at = COALESCE(read_at, ?) WHERE id = ? AND user_id = ?")
+        .bind(now(), notificationReadMatch[1], auth.user.id)
+        .run();
+      return json({ unreadCount: await unreadNotificationCount(env.DB, auth.user.id) });
     }
 
     if (request.method === "GET" && path === "/api/feed") {
@@ -762,6 +877,7 @@ export async function handleApiRequest(request, env) {
       const result = await env.DB.prepare(`SELECT
           r.*, u.handle, u.display_name, u.avatar_url,
           COALESCE((SELECT json_group_array(rt.tag) FROM recipe_tags rt WHERE rt.recipe_id = r.id), '[]') AS tags_json,
+          (SELECT re.note FROM recipe_edits re WHERE re.recipe_id = r.id ORDER BY re.created_at DESC LIMIT 1) AS last_edit_note,
           (SELECT COUNT(*) FROM likes l WHERE l.recipe_id = r.id) AS like_count,
           (SELECT COUNT(*) FROM comments c WHERE c.recipe_id = r.id) AS comment_count,
           EXISTS(SELECT 1 FROM likes ml WHERE ml.recipe_id = r.id AND ml.user_id = ?) AS liked_by_me,
@@ -858,7 +974,7 @@ export async function handleApiRequest(request, env) {
       return new Response(null, { status: 204 });
     }
 
-    const recipeMatch = path.match(/^\/api\/recipes\/([^/]+)(?:\/(like|save|comments))?$/);
+    const recipeMatch = path.match(/^\/api\/recipes\/([^/]+)(?:\/(like|save|comments|edits))?$/);
     if (recipeMatch) {
       const [, recipeId, action] = recipeMatch;
       const recipe = await getRecipe(env.DB, recipeId, viewer?.id || "");
@@ -866,10 +982,86 @@ export async function handleApiRequest(request, env) {
 
       if (request.method === "GET" && !action) return json({ recipe });
 
+      if (request.method === "GET" && action === "edits") {
+        const result = await env.DB.prepare(`SELECT id, note, created_at
+          FROM recipe_edits
+          WHERE recipe_id = ?
+          ORDER BY created_at DESC
+          LIMIT 30`)
+          .bind(recipeId)
+          .all();
+        return json({ edits: (result.results || []).map((row) => ({ id: row.id, note: row.note, createdAt: row.created_at })) });
+      }
+
+      if (request.method === "PATCH" && !action) {
+        const auth = await requireUser(request, env.DB);
+        if (auth.response) return auth.response;
+        if (recipe.author.id !== auth.user.id) return error(403, "NOT_OWNER", "Solo podés modificar tus recetas.");
+        const body = await readBody(request);
+        const mediaBaseUrl = env.MEDIA_UPLOAD_URL ? new URL(env.MEDIA_UPLOAD_URL).origin : "";
+        const updatedRecipe = validateRecipe(body, mediaBaseUrl);
+        if (updatedRecipe.error) return error(422, "INVALID_RECIPE", updatedRecipe.error);
+        const editNote = cleanText(body.editNote, 180);
+        if (editNote.length < 3) return error(422, "EDIT_NOTE_REQUIRED", "Contá brevemente qué modificaste.");
+
+        const updatedAt = now();
+        const statements = [
+          env.DB.prepare(`UPDATE recipes SET
+              title = ?, summary = ?, image_key = ?, image_url = ?, video_url = ?, cook_minutes = ?,
+              servings = ?, ingredients_json = ?, steps_json = ?, updated_at = ?, edit_count = edit_count + 1
+            WHERE id = ? AND author_id = ?`)
+            .bind(
+              updatedRecipe.title,
+              updatedRecipe.summary,
+              updatedRecipe.imageKey,
+              updatedRecipe.imageUrl,
+              updatedRecipe.videoUrl,
+              updatedRecipe.cookMinutes,
+              updatedRecipe.servings,
+              JSON.stringify(updatedRecipe.ingredients),
+              JSON.stringify(updatedRecipe.steps),
+              updatedAt,
+              recipeId,
+              auth.user.id,
+            ),
+          env.DB.prepare("DELETE FROM recipe_tags WHERE recipe_id = ?").bind(recipeId),
+          env.DB.prepare("INSERT INTO recipe_edits (id, recipe_id, author_id, note, created_at) VALUES (?, ?, ?, ?, ?)")
+            .bind(createId("edt"), recipeId, auth.user.id, editNote, updatedAt),
+          ...updatedRecipe.tags.map((tag) => env.DB.prepare("INSERT INTO recipe_tags (recipe_id, tag, created_at) VALUES (?, ?, ?)")
+            .bind(recipeId, tag, updatedAt)),
+        ];
+        await env.DB.batch(statements);
+
+        const replacedMedia = [
+          recipe.imageUrl && recipe.imageUrl !== updatedRecipe.imageUrl ? recipe.imageUrl : null,
+          recipe.videoUrl && recipe.videoUrl !== updatedRecipe.videoUrl ? recipe.videoUrl : null,
+        ].filter(Boolean);
+        if (replacedMedia.length && env.MEDIA_UPLOAD_URL && env.MEDIA_UPLOAD_TOKEN) {
+          for (const mediaUrl of replacedMedia) {
+            await fetch(new URL("/delete", env.MEDIA_UPLOAD_URL), {
+              method: "DELETE",
+              headers: {
+                authorization: `Bearer ${env.MEDIA_UPLOAD_TOKEN}`,
+                "x-user-id": auth.user.id,
+                "x-file-url": mediaUrl,
+              },
+            }).catch(() => null);
+          }
+        }
+        return json({ recipe: await getRecipe(env.DB, recipeId, auth.user.id) });
+      }
+
       if (request.method === "POST" && ["like", "save"].includes(action)) {
         const auth = await requireUser(request, env.DB);
         if (auth.response) return auth.response;
         const active = await toggleRelation(env.DB, action === "like" ? "likes" : "bookmarks", auth.user.id, recipeId);
+        if (action === "like" && active) {
+          await createNotification(env.DB, { userId: recipe.author.id, actorId: auth.user.id, type: "like", recipeId });
+        } else if (action === "like") {
+          await env.DB.prepare("DELETE FROM notifications WHERE user_id = ? AND actor_id = ? AND type = 'like' AND recipe_id = ?")
+            .bind(recipe.author.id, auth.user.id, recipeId)
+            .run();
+        }
         return json({ active, recipe: await getRecipe(env.DB, recipeId, auth.user.id) });
       }
 
@@ -908,6 +1100,7 @@ export async function handleApiRequest(request, env) {
         await env.DB.prepare("INSERT INTO comments (id, recipe_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)")
           .bind(commentId, recipeId, auth.user.id, comment, now())
           .run();
+        await createNotification(env.DB, { userId: recipe.author.id, actorId: auth.user.id, type: "comment", recipeId, commentId });
         return json({ id: commentId }, 201);
       }
 
@@ -993,11 +1186,15 @@ export async function handleApiRequest(request, env) {
         await env.DB.prepare("DELETE FROM follows WHERE follower_id = ? AND followed_id = ?")
           .bind(auth.user.id, followedId)
           .run();
+        await env.DB.prepare("DELETE FROM notifications WHERE user_id = ? AND actor_id = ? AND type = 'follow'")
+          .bind(followedId, auth.user.id)
+          .run();
         return json({ active: false });
       }
       await env.DB.prepare("INSERT INTO follows (follower_id, followed_id, created_at) VALUES (?, ?, ?)")
         .bind(auth.user.id, followedId, now())
         .run();
+      await createNotification(env.DB, { userId: followedId, actorId: auth.user.id, type: "follow" });
       return json({ active: true });
     }
 

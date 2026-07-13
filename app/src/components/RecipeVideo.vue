@@ -125,7 +125,7 @@ onBeforeUnmount(() => window.clearTimeout(holdTimer));
       :src="src"
       class="h-full w-full select-none object-contain"
       playsinline
-      preload="metadata"
+      :preload="compact ? 'none' : 'metadata'"
       @loadedmetadata="sync"
       @timeupdate="sync"
       @play="sync"
