@@ -22,6 +22,7 @@ const DiscoverView = defineAsyncComponent(() => import("./components/DiscoverVie
 const EditHistoryPanel = defineAsyncComponent(() => import("./components/EditHistoryPanel.vue"));
 const EditProfileModal = defineAsyncComponent(() => import("./components/EditProfileModal.vue"));
 const LoginPanel = defineAsyncComponent(() => import("./components/LoginPanel.vue"));
+const LiveStudio = defineAsyncComponent(() => import("./components/LiveStudio.vue"));
 const NotificationsPanel = defineAsyncComponent(() => import("./components/NotificationsPanel.vue"));
 const ProfileView = defineAsyncComponent(() => import("./components/ProfileView.vue"));
 const RecipeDetailView = defineAsyncComponent(() => import("./components/RecipeDetailView.vue"));
@@ -64,6 +65,7 @@ const unreadNotifications = ref(0);
 const editHistoryOpen = ref(false);
 const editHistory = ref([]);
 const editHistoryLoading = ref(false);
+const liveStudioOpen = ref(false);
 
 watch(loginOpen, (open) => {
   if (open) authError.value = "";
@@ -216,6 +218,23 @@ const openOwnProfile = () => {
     return;
   }
   openProfile(session.value.user.handle);
+};
+
+const openLiveStudio = () => {
+  if (!session.value.authenticated) {
+    loginOpen.value = true;
+    return;
+  }
+  liveStudioOpen.value = true;
+};
+
+const liveStarted = (nextLive) => {
+  if (profile.value?.isOwnProfile) profile.value = { ...profile.value, live: nextLive };
+  flash("Ya estás transmitiendo en tu perfil.");
+};
+
+const liveEnded = () => {
+  if (profile.value?.isOwnProfile) profile.value = { ...profile.value, live: null };
 };
 
 const toggleFollow = async (person) => {
@@ -658,8 +677,12 @@ onMounted(async () => {
         :viewer-id="session.user?.id || ''"
         :loading="profileLoading"
         :busy="busy"
+        :authenticated="session.authenticated"
         @back="loadView('feed')"
         @edit="editProfileOpen = true"
+        @start-live="openLiveStudio"
+        @live-ended="liveEnded"
+        @login="loginOpen = true"
         @follow="toggleFollow"
         @connections="openConnections"
         @open="openRecipe"
@@ -705,5 +728,6 @@ onMounted(async () => {
     <ConnectionsPanel v-if="connectionsOpen" :open="connectionsOpen" :type="connectionsType" :people="connectionsPeople" :loading="connectionsLoading" @close="connectionsOpen = false" @profile="connectionsOpen = false; openProfile($event)" />
     <NotificationsPanel v-if="notificationsOpen" :open="notificationsOpen" :items="notifications" :loading="notificationsLoading" :unread-count="unreadNotifications" @close="notificationsOpen = false" @read-all="readAllNotifications" @open-item="openNotification" />
     <EditHistoryPanel v-if="editHistoryOpen" :open="editHistoryOpen" :recipe="selectedRecipe" :edits="editHistory" :loading="editHistoryLoading" @close="editHistoryOpen = false" />
+    <LiveStudio v-if="liveStudioOpen" @close="liveStudioOpen = false" @started="liveStarted" @ended="liveEnded" @login="liveStudioOpen = false; loginOpen = true" />
   </div>
 </template>

@@ -165,3 +165,17 @@ test("only lets a comment author delete their own comment", () => {
   assert.equal(__test.canDeleteOwnedComment(comment, { id: "user-2" }), false);
   assert.equal(__test.canDeleteOwnedComment(null, { id: "user-1" }), false);
 });
+
+test("normalizes a live title and description", () => {
+  const live = __test.validateLive({
+    title: "  Pasta en casa  ",
+    description: "  Cocinamos y respondemos preguntas.  ",
+  });
+  assert.equal(live.title, "Pasta en casa");
+  assert.equal(live.description, "Cocinamos y respondemos preguntas.");
+  assert.equal(live.error, undefined);
+});
+
+test("rejects a live without a useful title", () => {
+  assert.match(__test.validateLive({ title: "yo" }).error, /3 caracteres/i);
+});

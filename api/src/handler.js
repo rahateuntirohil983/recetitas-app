@@ -6,6 +6,8 @@ const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
 const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const ALLOWED_VIDEO_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime"]);
+const LIVE_ACTIVE_WINDOW_MS = 45_000;
+const LIVE_VIEWER_WINDOW_MS = 25_000;
 
 const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS users (
@@ -82,6 +84,39 @@ const SCHEMA_STATEMENTS = [
     PRIMARY KEY (follower_id, followed_id),
     CHECK (follower_id <> followed_id)
   )`,
+  `CREATE TABLE IF NOT EXISTS live_streams (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    stream_path TEXT NOT NULL UNIQUE,
+    publish_token_hash TEXT NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'live' CHECK (status IN ('live', 'ended')),
+    started_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    ended_at TEXT,
+    created_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS live_comments (
+    id TEXT PRIMARY KEY,
+    live_id TEXT NOT NULL REFERENCES live_streams(id) ON DELETE CASCADE,
+    author_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    body TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS live_likes (
+    live_id TEXT NOT NULL REFERENCES live_streams(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (live_id, user_id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS live_viewers (
+    live_id TEXT NOT NULL REFERENCES live_streams(id) ON DELETE CASCADE,
+    viewer_key TEXT NOT NULL,
+    user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    last_seen_at TEXT NOT NULL,
+    PRIMARY KEY (live_id, viewer_key)
+  )`,
   `CREATE TABLE IF NOT EXISTS credentials (
     user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     password_hash TEXT NOT NULL,
@@ -106,6 +141,10 @@ const SCHEMA_STATEMENTS = [
   "CREATE INDEX IF NOT EXISTS recipe_tags_tag_idx ON recipe_tags(tag, created_at DESC)",
   "CREATE INDEX IF NOT EXISTS recipe_edits_recipe_idx ON recipe_edits(recipe_id, created_at DESC)",
   "CREATE INDEX IF NOT EXISTS notifications_user_idx ON notifications(user_id, read_at, created_at DESC)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS live_streams_one_active_user_idx ON live_streams(user_id) WHERE status = 'live'",
+  "CREATE INDEX IF NOT EXISTS live_streams_status_seen_idx ON live_streams(status, last_seen_at DESC)",
+  "CREATE INDEX IF NOT EXISTS live_comments_live_idx ON live_comments(live_id, created_at)",
+  "CREATE INDEX IF NOT EXISTS live_viewers_seen_idx ON live_viewers(live_id, last_seen_at)",
   "CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id)",
   "CREATE INDEX IF NOT EXISTS sessions_expires_at_idx ON sessions(expires_at)",
   "CREATE INDEX IF NOT EXISTS auth_attempts_key_created_idx ON auth_attempts(attempt_key, created_at)",
@@ -569,6 +608,81 @@ const unreadNotificationCount = async (db, userId) => {
   return Number(row?.count || 0);
 };
 
+const liveActiveCutoff = () => new Date(Date.now() - LIVE_ACTIVE_WINDOW_MS).toISOString();
+const liveViewerCutoff = () => new Date(Date.now() - LIVE_VIEWER_WINDOW_MS).toISOString();
+
+const liveDto = (row, liveBaseUrl = "") => ({
+  id: row.id,
+  title: row.title,
+  description: row.description || "",
+  status: row.status,
+  startedAt: row.started_at,
+  endedAt: row.ended_at || null,
+  playbackUrl: row.status === "live" && liveBaseUrl ? `${String(liveBaseUrl).replace(/\/$/, "")}/${row.stream_path}/whep` : null,
+  viewerCount: Number(row.viewer_count || 0),
+  likeCount: Number(row.like_count || 0),
+  commentCount: Number(row.comment_count || 0),
+  liked: Boolean(row.liked_by_me),
+  author: {
+    id: row.user_id,
+    handle: row.handle,
+    displayName: row.display_name,
+    avatarUrl: publicAvatarUrl(row.avatar_url),
+    avatarIndex: avatarIndexForRow({ id: row.user_id, avatar_url: row.avatar_url }),
+  },
+});
+
+const getLiveStream = async (db, { liveId = null, userId = null, viewerId = "", liveBaseUrl = "", includeEnded = false } = {}) => {
+  const identityColumn = liveId ? "ls.id" : "ls.user_id";
+  const identity = liveId || userId;
+  if (!identity) return null;
+  const row = await db.prepare(`SELECT
+      ls.*, u.handle, u.display_name, u.avatar_url,
+      (SELECT COUNT(*) FROM live_likes ll WHERE ll.live_id = ls.id) AS like_count,
+      (SELECT COUNT(*) FROM live_comments lc WHERE lc.live_id = ls.id) AS comment_count,
+      (SELECT COUNT(*) FROM live_viewers lv WHERE lv.live_id = ls.id AND lv.last_seen_at > ?) AS viewer_count,
+      EXISTS(SELECT 1 FROM live_likes ml WHERE ml.live_id = ls.id AND ml.user_id = ?) AS liked_by_me
+    FROM live_streams ls
+    JOIN users u ON u.id = ls.user_id
+    WHERE ${identityColumn} = ?
+      ${includeEnded ? "" : "AND ls.status = 'live' AND ls.last_seen_at > ?"}
+    ORDER BY ls.started_at DESC
+    LIMIT 1`)
+    .bind(liveViewerCutoff(), viewerId, identity, ...(!includeEnded ? [liveActiveCutoff()] : []))
+    .first();
+  return row ? liveDto(row, liveBaseUrl) : null;
+};
+
+const getLiveComments = async (db, liveId) => {
+  const result = await db.prepare(`SELECT lc.id, lc.body, lc.created_at, u.id AS author_id, u.handle, u.display_name, u.avatar_url
+    FROM live_comments lc
+    JOIN users u ON u.id = lc.author_id
+    WHERE lc.live_id = ?
+    ORDER BY lc.created_at ASC
+    LIMIT 120`)
+    .bind(liveId)
+    .all();
+  return (result.results || []).map((row) => ({
+    id: row.id,
+    body: row.body,
+    createdAt: row.created_at,
+    author: {
+      id: row.author_id,
+      handle: row.handle,
+      displayName: row.display_name,
+      avatarUrl: publicAvatarUrl(row.avatar_url),
+      avatarIndex: avatarIndexForRow({ id: row.author_id, avatar_url: row.avatar_url }),
+    },
+  }));
+};
+
+const validateLive = (body) => {
+  const title = cleanText(body?.title, 80);
+  const description = cleanText(body?.description, 280);
+  if (title.length < 3) return { error: "El título debe tener al menos 3 caracteres." };
+  return { title, description };
+};
+
 const validateRecipe = (body, mediaBaseUrl = "") => {
   const title = cleanText(body.title, 90);
   const summary = cleanText(body.summary, 280);
@@ -633,6 +747,167 @@ export async function handleApiRequest(request, env) {
 
     if (request.method === "GET" && path === "/api/health") {
       return json({ ok: true, service: "recetitas-api", database: "ready" });
+    }
+
+    if (request.method === "POST" && path === "/api/live/media-auth") {
+      const suppliedSecret = request.headers.get("x-live-auth-token") || "";
+      if (!env.LIVE_AUTH_TOKEN || !constantTimeEqual(suppliedSecret, env.LIVE_AUTH_TOKEN)) {
+        return error(401, "LIVE_AUTH_DENIED", "No autorizado.");
+      }
+      const body = await readBody(request);
+      const action = cleanText(body.action, 20).toLowerCase();
+      const streamPath = cleanText(body.path, 100).replace(/^\/+|\/+$/g, "");
+      if (!/^(publish|read)$/.test(action) || !/^stream_[a-f0-9]{24}$/.test(streamPath)) {
+        return error(401, "LIVE_AUTH_DENIED", "No autorizado.");
+      }
+      const active = await env.DB.prepare(`SELECT publish_token_hash FROM live_streams
+        WHERE stream_path = ? AND status = 'live' AND last_seen_at > ?`)
+        .bind(streamPath, liveActiveCutoff())
+        .first();
+      if (!active) return error(401, "LIVE_NOT_ACTIVE", "El directo no está activo.");
+      if (action === "publish") {
+        const publishToken = String(body.token || body.password || "");
+        const receivedHash = await sha256(publishToken);
+        if (!constantTimeEqual(receivedHash, active.publish_token_hash)) return error(401, "LIVE_AUTH_DENIED", "No autorizado.");
+      }
+      return json({ ok: true });
+    }
+
+    if (request.method === "POST" && path === "/api/live/start") {
+      const auth = await requireUser(request, env.DB);
+      if (auth.response) return auth.response;
+      if (!env.LIVE_WEBRTC_BASE_URL || !env.LIVE_AUTH_TOKEN) {
+        return error(503, "LIVE_UNAVAILABLE", "Los directos todavía no están disponibles.");
+      }
+      const liveInput = validateLive(await readBody(request));
+      if (liveInput.error) return error(422, "INVALID_LIVE_TITLE", liveInput.error);
+      const liveId = createId("live");
+      const streamPath = `stream_${randomHex(12)}`;
+      const publishToken = randomHex(32);
+      const timestamp = now();
+      await env.DB.batch([
+        env.DB.prepare("UPDATE live_streams SET status = 'ended', ended_at = COALESCE(ended_at, ?) WHERE user_id = ? AND status = 'live'")
+          .bind(timestamp, auth.user.id),
+        env.DB.prepare(`INSERT INTO live_streams
+          (id, user_id, stream_path, publish_token_hash, title, description, status, started_at, last_seen_at, ended_at, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, 'live', ?, ?, NULL, ?)`)
+          .bind(liveId, auth.user.id, streamPath, await sha256(publishToken), liveInput.title, liveInput.description, timestamp, timestamp, timestamp),
+      ]);
+      const live = await getLiveStream(env.DB, { liveId, viewerId: auth.user.id, liveBaseUrl: env.LIVE_WEBRTC_BASE_URL });
+      return json({
+        live,
+        comments: [],
+        publishUrl: `${String(env.LIVE_WEBRTC_BASE_URL).replace(/\/$/, "")}/${streamPath}/whip`,
+        publishToken,
+      }, 201);
+    }
+
+    const liveCommentDeleteMatch = path.match(/^\/api\/live\/([^/]+)\/comments\/([^/]+)$/);
+    if (request.method === "DELETE" && liveCommentDeleteMatch) {
+      const auth = await requireUser(request, env.DB);
+      if (auth.response) return auth.response;
+      const [liveId, commentId] = liveCommentDeleteMatch.slice(1);
+      const comment = await env.DB.prepare("SELECT author_id FROM live_comments WHERE id = ? AND live_id = ?")
+        .bind(commentId, liveId)
+        .first();
+      if (!comment) return error(404, "LIVE_COMMENT_NOT_FOUND", "No encontramos ese comentario.");
+      if (comment.author_id !== auth.user.id) return error(403, "LIVE_COMMENT_FORBIDDEN", "Solo podés borrar tus comentarios.");
+      await env.DB.prepare("DELETE FROM live_comments WHERE id = ? AND live_id = ? AND author_id = ?")
+        .bind(commentId, liveId, auth.user.id)
+        .run();
+      return new Response(null, { status: 204 });
+    }
+
+    const liveMatch = path.match(/^\/api\/live\/([^/]+)\/(events|end|heartbeat|broadcaster-heartbeat|like|comments)$/);
+    if (liveMatch) {
+      const [, liveId, action] = liveMatch;
+
+      if (request.method === "GET" && action === "events") {
+        const timestamp = now();
+        await env.DB.prepare("UPDATE live_streams SET status = 'ended', ended_at = COALESCE(ended_at, ?) WHERE id = ? AND status = 'live' AND last_seen_at <= ?")
+          .bind(timestamp, liveId, liveActiveCutoff())
+          .run();
+        const live = await getLiveStream(env.DB, { liveId, viewerId: viewer?.id || "", liveBaseUrl: env.LIVE_WEBRTC_BASE_URL, includeEnded: true });
+        if (!live) return error(404, "LIVE_NOT_FOUND", "No encontramos ese directo.");
+        return json({ live, comments: await getLiveComments(env.DB, liveId) });
+      }
+
+      if (request.method === "POST" && action === "heartbeat") {
+        const body = await readBody(request);
+        const viewerKey = cleanText(body.viewerKey, 40).toLowerCase();
+        if (!/^[a-f0-9]{32}$/.test(viewerKey)) return error(422, "INVALID_VIEWER", "No pudimos registrar al espectador.");
+        const active = await env.DB.prepare("SELECT id FROM live_streams WHERE id = ? AND status = 'live' AND last_seen_at > ?")
+          .bind(liveId, liveActiveCutoff())
+          .first();
+        if (!active) return error(404, "LIVE_ENDED", "El directo terminó.");
+        const timestamp = now();
+        await env.DB.batch([
+          env.DB.prepare("DELETE FROM live_viewers WHERE last_seen_at < ?")
+            .bind(new Date(Date.now() - 5 * 60_000).toISOString()),
+          env.DB.prepare(`INSERT INTO live_viewers (live_id, viewer_key, user_id, last_seen_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(live_id, viewer_key) DO UPDATE SET user_id = excluded.user_id, last_seen_at = excluded.last_seen_at`)
+            .bind(liveId, viewerKey, viewer?.id || null, timestamp),
+        ]);
+        const count = await env.DB.prepare("SELECT COUNT(*) AS count FROM live_viewers WHERE live_id = ? AND last_seen_at > ?")
+          .bind(liveId, liveViewerCutoff())
+          .first();
+        return json({ viewerCount: Number(count?.count || 0) });
+      }
+
+      if (request.method === "POST" && action === "broadcaster-heartbeat") {
+        const auth = await requireUser(request, env.DB);
+        if (auth.response) return auth.response;
+        const result = await env.DB.prepare("UPDATE live_streams SET last_seen_at = ? WHERE id = ? AND user_id = ? AND status = 'live'")
+          .bind(now(), liveId, auth.user.id)
+          .run();
+        if (!result.meta?.changes) return error(404, "LIVE_NOT_FOUND", "No encontramos tu directo.");
+        return json({ ok: true });
+      }
+
+      if (request.method === "POST" && action === "end") {
+        const auth = await requireUser(request, env.DB);
+        if (auth.response) return auth.response;
+        const timestamp = now();
+        const result = await env.DB.prepare("UPDATE live_streams SET status = 'ended', ended_at = COALESCE(ended_at, ?), last_seen_at = ? WHERE id = ? AND user_id = ?")
+          .bind(timestamp, timestamp, liveId, auth.user.id)
+          .run();
+        if (!result.meta?.changes) return error(404, "LIVE_NOT_FOUND", "No encontramos tu directo.");
+        const live = await getLiveStream(env.DB, { liveId, viewerId: auth.user.id, liveBaseUrl: env.LIVE_WEBRTC_BASE_URL, includeEnded: true });
+        return json({ live });
+      }
+
+      if (request.method === "POST" && action === "like") {
+        const auth = await requireUser(request, env.DB);
+        if (auth.response) return auth.response;
+        const active = await env.DB.prepare("SELECT id FROM live_streams WHERE id = ? AND status = 'live' AND last_seen_at > ?")
+          .bind(liveId, liveActiveCutoff())
+          .first();
+        if (!active) return error(404, "LIVE_ENDED", "El directo terminó.");
+        const existing = await env.DB.prepare("SELECT 1 AS found FROM live_likes WHERE live_id = ? AND user_id = ?")
+          .bind(liveId, auth.user.id)
+          .first();
+        if (existing) await env.DB.prepare("DELETE FROM live_likes WHERE live_id = ? AND user_id = ?").bind(liveId, auth.user.id).run();
+        else await env.DB.prepare("INSERT INTO live_likes (live_id, user_id, created_at) VALUES (?, ?, ?)").bind(liveId, auth.user.id, now()).run();
+        const count = await env.DB.prepare("SELECT COUNT(*) AS count FROM live_likes WHERE live_id = ?").bind(liveId).first();
+        return json({ active: !existing, likeCount: Number(count?.count || 0) });
+      }
+
+      if (request.method === "POST" && action === "comments") {
+        const auth = await requireUser(request, env.DB);
+        if (auth.response) return auth.response;
+        const active = await env.DB.prepare("SELECT id FROM live_streams WHERE id = ? AND status = 'live' AND last_seen_at > ?")
+          .bind(liveId, liveActiveCutoff())
+          .first();
+        if (!active) return error(404, "LIVE_ENDED", "El directo terminó.");
+        const body = cleanText((await readBody(request)).body, 180);
+        if (!body) return error(422, "EMPTY_LIVE_COMMENT", "Escribí un comentario.");
+        const commentId = createId("lvc");
+        await env.DB.prepare("INSERT INTO live_comments (id, live_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)")
+          .bind(commentId, liveId, auth.user.id, body, now())
+          .run();
+        return json({ id: commentId }, 201);
+      }
     }
 
     if (request.method === "POST" && path === "/api/uploads") {
@@ -1158,6 +1433,11 @@ export async function handleApiRequest(request, env) {
         .bind(viewer?.id || "", profileMatch[1])
         .first();
       if (!profile) return error(404, "PROFILE_NOT_FOUND", "No encontramos ese perfil.");
+      const activeLive = await getLiveStream(env.DB, {
+        userId: profile.id,
+        viewerId: viewer?.id || "",
+        liveBaseUrl: env.LIVE_WEBRTC_BASE_URL,
+      });
       return json({
         profile: {
           ...userDto(profile, { includeEmail: false }),
@@ -1166,6 +1446,7 @@ export async function handleApiRequest(request, env) {
           followingCount: Number(profile.following_count || 0),
           followed: Boolean(profile.followed_by_me),
           isOwnProfile: profile.id === viewer?.id,
+          live: activeLive,
         },
         recipes: await getFeed(env.DB, viewer?.id || "", 20, profile.id),
       });
@@ -1217,6 +1498,7 @@ export const __test = {
   parseCookies,
   sessionCookie,
   validateLogin,
+  validateLive,
   validateRegistration,
   validateRecipe,
   verifyPassword,

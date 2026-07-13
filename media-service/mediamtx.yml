@@ -1,0 +1,36 @@
+logLevel: info
+logDestinations: [stdout]
+
+rtsp: false
+rtmp: false
+hls: false
+srt: false
+playback: false
+api: false
+metrics: false
+pprof: false
+moq: false
+
+authMethod: http
+authHTTPAddress: http://127.0.0.1:3004/live-auth
+authHTTPExclude:
+  - action: api
+  - action: metrics
+  - action: pprof
+
+webrtc: true
+webrtcAddress: 127.0.0.1:8889
+webrtcAllowOrigins:
+  - https://recetitas-app.stherling53.chatgpt.site
+webrtcTrustedProxies: [127.0.0.1]
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: :8189
+webrtcAdditionalHosts:
+  - 151.241.100.72
+  - media-recetitas.hex-rp.com
+
+pathDefaults:
+  source: publisher
+
+paths:
+  all_others:

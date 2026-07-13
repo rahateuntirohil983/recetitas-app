@@ -1,6 +1,7 @@
 <script setup>
-import { PhArrowLeft, PhPencilSimple, PhUserPlus } from "@phosphor-icons/vue";
+import { PhArrowLeft, PhPencilSimple, PhUserPlus, PhVideoCamera } from "@phosphor-icons/vue";
 import PigAvatar from "./PigAvatar.vue";
+import ProfileLive from "./ProfileLive.vue";
 import RecipeCard from "./RecipeCard.vue";
 
 defineProps({
@@ -9,9 +10,10 @@ defineProps({
   viewerId: { type: String, default: "" },
   loading: { type: Boolean, default: false },
   busy: { type: Boolean, default: false },
+  authenticated: { type: Boolean, default: false },
 });
 
-defineEmits(["back", "edit", "edit-recipe", "follow", "connections", "open", "tag", "like", "save", "comments", "profile", "delete"]);
+defineEmits(["back", "edit", "edit-recipe", "follow", "connections", "open", "tag", "like", "save", "comments", "profile", "delete", "start-live", "live-ended", "login"]);
 </script>
 
 <template>
@@ -33,9 +35,14 @@ defineEmits(["back", "edit", "edit-recipe", "follow", "connections", "open", "ta
         <div class="relative px-5 pb-6 sm:px-8 sm:pb-8">
           <div class="-mt-14 flex flex-col gap-4 sm:-mt-16 sm:flex-row sm:items-end sm:justify-between">
             <PigAvatar :index="profile.avatarIndex" :size="128" :label="`Avatar de ${profile.displayName}`" class="border-4 border-porcelain shadow-[0_0_0_2px_#242421]" />
-            <button v-if="profile.isOwnProfile" type="button" class="focus-ring inline-flex min-h-12 items-center justify-center gap-2 border-2 border-charcoal bg-porcelain px-5 font-semibold transition hover:bg-blush" @click="$emit('edit')">
-              <PhPencilSimple :size="20" aria-hidden="true" /> Editar perfil
-            </button>
+            <div v-if="profile.isOwnProfile" class="grid gap-2 sm:flex">
+              <button type="button" class="focus-ring inline-flex min-h-12 items-center justify-center gap-2 border-2 border-charcoal bg-blush px-5 font-semibold transition hover:bg-olive" @click="$emit('start-live')">
+                <PhVideoCamera :size="21" weight="fill" aria-hidden="true" /> {{ profile.live ? "Volver al directo" : "Hacer un directo" }}
+              </button>
+              <button type="button" class="focus-ring inline-flex min-h-12 items-center justify-center gap-2 border-2 border-charcoal bg-porcelain px-5 font-semibold transition hover:bg-blush" @click="$emit('edit')">
+                <PhPencilSimple :size="20" aria-hidden="true" /> Editar perfil
+              </button>
+            </div>
             <button v-else type="button" class="focus-ring inline-flex min-h-12 items-center justify-center gap-2 border-2 border-charcoal px-5 font-semibold transition" :class="profile.followed ? 'bg-olive' : 'bg-charcoal text-porcelain'" :disabled="busy" @click="$emit('follow', profile)">
               <PhUserPlus :size="20" :weight="profile.followed ? 'fill' : 'regular'" aria-hidden="true" /> {{ profile.followed ? "Siguiendo" : "Seguir" }}
             </button>
@@ -57,6 +64,15 @@ defineEmits(["back", "edit", "edit-recipe", "follow", "connections", "open", "ta
           </div>
         </div>
       </header>
+
+      <ProfileLive
+        v-if="profile.live"
+        :live="profile.live"
+        :authenticated="authenticated"
+        :viewer-id="viewerId"
+        @login="$emit('login')"
+        @ended="$emit('live-ended')"
+      />
 
       <div class="mb-6 mt-10 flex items-end justify-between gap-4">
         <div>

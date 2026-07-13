@@ -180,6 +180,24 @@ select:focus-visible {
   accent-color: #e3b4b9;
 }
 
+.live-control {
+  display: grid;
+  min-width: 0;
+  min-height: 4.5rem;
+  place-items: center;
+  align-content: center;
+  gap: 0.25rem;
+  border-right: 2px solid #242421;
+  padding: 0.45rem 0.25rem;
+  color: #242421;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.live-control:last-of-type {
+  border-right: 0;
+}
+
 .composer-prompt,
 .profile-note,
 .login-sheet,

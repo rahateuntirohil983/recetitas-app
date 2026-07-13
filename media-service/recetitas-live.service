@@ -1,0 +1,20 @@
+[Unit]
+Description=recetitas.app WebRTC live streaming
+After=network-online.target recetitas-media.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/recetitas-live
+ExecStart=/opt/recetitas-live/mediamtx /opt/recetitas-live/mediamtx.yml
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target

@@ -6,6 +6,9 @@ let demoCurrentUser = structuredClone(demoUser);
 let recipes = structuredClone(demoRecipes);
 let comments = structuredClone(demoComments);
 let recipeEdits = {};
+let demoLive = null;
+let demoLiveComments = [];
+let demoLiveLiked = false;
 const followedUsers = new Set();
 
 const pause = (duration = 180) => new Promise((resolve) => setTimeout(resolve, duration));
@@ -265,6 +268,66 @@ export const api = {
     recipes = recipes.filter((recipe) => recipe.id !== recipeId);
     delete comments[recipeId];
     await pause(160);
+    return null;
+  },
+
+  async startLive(payload) {
+    if (!useDemo) return request("/api/live/start", { method: "POST", body: JSON.stringify(payload) });
+    if (!demoAuthenticated) throw Object.assign(new Error("Iniciá sesión para transmitir."), { status: 401 });
+    demoLive = {
+      id: `live_${crypto.randomUUID()}`,
+      ...payload,
+      status: "live",
+      playbackUrl: "http://127.0.0.1:8889/demo/whep",
+      viewerCount: 0,
+      likeCount: 0,
+      liked: false,
+      startedAt: new Date().toISOString(),
+      author: demoCurrentUser,
+    };
+    return { live: demoLive, publishUrl: "http://127.0.0.1:8889/demo/whip", publishToken: "demo", comments: [] };
+  },
+
+  async endLive(liveId) {
+    if (!useDemo) return request(`/api/live/${encodeURIComponent(liveId)}/end`, { method: "POST", body: "{}" });
+    if (demoLive?.id === liveId) demoLive.status = "ended";
+    return { live: demoLive };
+  },
+
+  async liveBroadcasterHeartbeat(liveId) {
+    if (!useDemo) return request(`/api/live/${encodeURIComponent(liveId)}/broadcaster-heartbeat`, { method: "POST", body: "{}" });
+    return { ok: true };
+  },
+
+  async liveHeartbeat(liveId, viewerKey) {
+    if (!useDemo) return request(`/api/live/${encodeURIComponent(liveId)}/heartbeat`, { method: "POST", body: JSON.stringify({ viewerKey }) });
+    return { viewerCount: demoLive?.id === liveId ? 1 : 0 };
+  },
+
+  async liveEvents(liveId) {
+    if (!useDemo) return request(`/api/live/${encodeURIComponent(liveId)}/events`);
+    if (!demoLive || demoLive.id !== liveId) throw Object.assign(new Error("El directo terminó."), { status: 404 });
+    return { live: { ...demoLive, liked: demoLiveLiked, likeCount: demoLiveLiked ? 1 : 0 }, comments: demoLiveComments };
+  },
+
+  async toggleLiveLike(liveId) {
+    if (!useDemo) return request(`/api/live/${encodeURIComponent(liveId)}/like`, { method: "POST", body: "{}" });
+    if (!demoAuthenticated) throw Object.assign(new Error("Iniciá sesión para dar me gusta."), { status: 401 });
+    demoLiveLiked = !demoLiveLiked;
+    return { active: demoLiveLiked, likeCount: demoLiveLiked ? 1 : 0 };
+  },
+
+  async addLiveComment(liveId, body) {
+    if (!useDemo) return request(`/api/live/${encodeURIComponent(liveId)}/comments`, { method: "POST", body: JSON.stringify({ body }) });
+    if (!demoAuthenticated) throw Object.assign(new Error("Iniciá sesión para comentar."), { status: 401 });
+    const comment = { id: `lvc_${crypto.randomUUID()}`, body, createdAt: new Date().toISOString(), author: demoCurrentUser };
+    demoLiveComments = [...demoLiveComments, comment];
+    return { comment };
+  },
+
+  async deleteLiveComment(liveId, commentId) {
+    if (!useDemo) return request(`/api/live/${encodeURIComponent(liveId)}/comments/${encodeURIComponent(commentId)}`, { method: "DELETE" });
+    demoLiveComments = demoLiveComments.filter((comment) => comment.id !== commentId);
     return null;
   },
 

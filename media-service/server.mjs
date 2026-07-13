@@ -11,6 +11,8 @@ const port = Number(process.env.PORT || 3004);
 const uploadToken = process.env.UPLOAD_TOKEN || "";
 const storageRoot = process.env.STORAGE_ROOT || "/var/lib/recetitas-media";
 const publicBaseUrl = String(process.env.PUBLIC_BASE_URL || "").replace(/\/$/, "");
+const liveAuthUrl = String(process.env.LIVE_AUTH_URL || "");
+const liveAuthToken = String(process.env.LIVE_AUTH_TOKEN || "");
 const run = promisify(execFile);
 const maxImageBytes = 8 * 1024 * 1024;
 const maxVideoBytes = 50 * 1024 * 1024;
@@ -43,6 +45,17 @@ const tokenMatches = (authorization) => {
   const provided = Buffer.from(String(authorization || "").replace(/^Bearer\s+/i, ""));
   const expected = Buffer.from(uploadToken);
   return provided.length === expected.length && timingSafeEqual(provided, expected);
+};
+
+const readSmallJson = async (request) => {
+  let received = 0;
+  const chunks = [];
+  for await (const chunk of request) {
+    received += chunk.length;
+    if (received > 32 * 1024) throw new Error("PAYLOAD_TOO_LARGE");
+    chunks.push(chunk);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 };
 
 const validMagic = async (path, contentType) => {
@@ -85,7 +98,27 @@ const transcodeVideo = async (inputPath, outputPath) => {
 
 const server = createServer(async (request, response) => {
   if (request.method === "GET" && request.url === "/health") {
-    return json(response, 200, { ok: true, service: "recetitas-media", maxVideoSeconds });
+    return json(response, 200, { ok: true, service: "recetitas-media", maxVideoSeconds, liveAuth: Boolean(liveAuthUrl && liveAuthToken) });
+  }
+
+  if (request.method === "POST" && request.url === "/live-auth") {
+    if (!liveAuthUrl || !liveAuthToken) return json(response, 503, { error: "live_auth_unavailable" });
+    try {
+      const payload = await readSmallJson(request);
+      const upstream = await fetch(liveAuthUrl, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-live-auth-token": liveAuthToken,
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(5000),
+      });
+      return json(response, upstream.ok ? 200 : upstream.status === 401 ? 401 : 403, { ok: upstream.ok });
+    } catch (failure) {
+      console.error("live_auth_failed", failure?.message || failure);
+      return json(response, 503, { error: "live_auth_failed" });
+    }
   }
 
   if (request.method === "DELETE" && request.url === "/delete") {
