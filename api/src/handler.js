@@ -92,6 +92,7 @@ const SCHEMA_STATEMENTS = [
     title TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'live' CHECK (status IN ('live', 'ended')),
+    published_at TEXT,
     started_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
     ended_at TEXT,
@@ -167,6 +168,7 @@ const SCHEMA_STATEMENTS = [
 
 let schemaReady;
 let recipeColumnsReady;
+let liveColumnsReady;
 let demoCleanupReady;
 
 const json = (data, status = 200, extraHeaders = {}) => new Response(JSON.stringify(data), {
@@ -438,6 +440,21 @@ const ensureRecipeColumns = async (db) => {
   await recipeColumnsReady;
 };
 
+const ensureLiveColumns = async (db) => {
+  if (!liveColumnsReady) {
+    liveColumnsReady = (async () => {
+      const columns = await db.prepare("PRAGMA table_info(live_streams)").all();
+      if (!(columns.results || []).some((column) => column.name === "published_at")) {
+        await db.prepare("ALTER TABLE live_streams ADD COLUMN published_at TEXT").run();
+      }
+    })().catch((cause) => {
+      liveColumnsReady = null;
+      throw cause;
+    });
+  }
+  await liveColumnsReady;
+};
+
 const cleanupDemoData = async (db) => {
   if (!demoCleanupReady) {
     const statements = [
@@ -630,10 +647,10 @@ const liveDto = (row, liveBaseUrl = "") => ({
   id: row.id,
   title: row.title,
   description: row.description || "",
-  status: row.status,
+  status: row.status === "live" && !row.published_at ? "starting" : row.status,
   startedAt: row.started_at,
   endedAt: row.ended_at || null,
-  playbackUrl: row.status === "live" && liveBaseUrl ? `${String(liveBaseUrl).replace(/\/$/, "")}/${row.stream_path}/whep` : null,
+  playbackUrl: row.status === "live" && row.published_at && liveBaseUrl ? `${String(liveBaseUrl).replace(/\/$/, "")}/${row.stream_path}/whep` : null,
   viewerCount: Number(row.viewer_count || 0),
   likeCount: Number(row.like_count || 0),
   commentCount: Number(row.comment_count || 0),
@@ -669,7 +686,7 @@ const getLiveStream = async (db, { liveId = null, userId = null, viewerId = "", 
     FROM live_streams ls
     JOIN users u ON u.id = ls.user_id
     WHERE ${identityColumn} = ?
-      ${includeEnded ? "" : "AND ls.status = 'live' AND ls.last_seen_at > ?"}
+      ${includeEnded ? "" : "AND ls.status = 'live' AND ls.published_at IS NOT NULL AND ls.last_seen_at > ?"}
     ORDER BY ls.started_at DESC
     LIMIT 1`)
     .bind(liveViewerCutoff(), viewerId, viewerId, viewerId, viewerId, identity, ...(!includeEnded ? [liveActiveCutoff()] : []))
@@ -690,7 +707,7 @@ const getDiscoverLiveStreams = async (db, { viewerId = "", liveBaseUrl = "", lim
       EXISTS(SELECT 1 FROM live_bans lb WHERE lb.live_id = ls.id AND lb.user_id = ?) AS viewer_is_banned
     FROM live_streams ls
     JOIN users u ON u.id = ls.user_id
-    WHERE ls.status = 'live' AND ls.last_seen_at > ?
+    WHERE ls.status = 'live' AND ls.published_at IS NOT NULL AND ls.last_seen_at > ?
     ORDER BY viewer_count DESC, ls.started_at DESC
     LIMIT ?`)
     .bind(liveViewerCutoff(), viewerId, viewerId, viewerId, viewerId, liveActiveCutoff(), safeLimit)
@@ -820,6 +837,7 @@ export async function handleApiRequest(request, env) {
   try {
     await ensureSchema(env.DB);
     await ensureRecipeColumns(env.DB);
+    await ensureLiveColumns(env.DB);
     await cleanupDemoData(env.DB);
 
     const url = new URL(request.url);
@@ -841,12 +859,12 @@ export async function handleApiRequest(request, env) {
       if (!/^(publish|read)$/.test(action) || !/^stream_[a-f0-9]{24}$/.test(streamPath)) {
         return error(401, "LIVE_AUTH_DENIED", "No autorizado.");
       }
-      const active = await env.DB.prepare(`SELECT publish_token_hash, status FROM live_streams
-        WHERE stream_path = ? AND status IN ('starting', 'live') AND last_seen_at > ?`)
+      const active = await env.DB.prepare(`SELECT publish_token_hash, status, published_at FROM live_streams
+        WHERE stream_path = ? AND status = 'live' AND last_seen_at > ?`)
         .bind(streamPath, liveActiveCutoff())
         .first();
       if (!active) return error(401, "LIVE_NOT_ACTIVE", "El directo no está activo.");
-      if (action === "read" && active.status !== "live") return error(401, "LIVE_NOT_READY", "El directo todavía no está listo.");
+      if (action === "read" && !active.published_at) return error(401, "LIVE_NOT_READY", "El directo todavía no está listo.");
       if (action === "publish") {
         const publishToken = String(body.token || body.password || "");
         const receivedHash = await sha256(publishToken);
@@ -868,11 +886,11 @@ export async function handleApiRequest(request, env) {
       const publishToken = randomHex(32);
       const timestamp = now();
       await env.DB.batch([
-        env.DB.prepare("UPDATE live_streams SET status = 'ended', ended_at = COALESCE(ended_at, ?) WHERE user_id = ? AND status IN ('starting', 'live')")
+        env.DB.prepare("UPDATE live_streams SET status = 'ended', ended_at = COALESCE(ended_at, ?) WHERE user_id = ? AND status = 'live'")
           .bind(timestamp, auth.user.id),
         env.DB.prepare(`INSERT INTO live_streams
-          (id, user_id, stream_path, publish_token_hash, title, description, status, started_at, last_seen_at, ended_at, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, 'starting', ?, ?, NULL, ?)`)
+          (id, user_id, stream_path, publish_token_hash, title, description, status, published_at, started_at, last_seen_at, ended_at, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, 'live', NULL, ?, ?, NULL, ?)`)
           .bind(liveId, auth.user.id, streamPath, await sha256(publishToken), liveInput.title, liveInput.description, timestamp, timestamp, timestamp),
       ]);
       const live = await getLiveStream(env.DB, { liveId, viewerId: auth.user.id, liveBaseUrl: env.LIVE_WEBRTC_BASE_URL, includeEnded: true });
@@ -957,12 +975,12 @@ export async function handleApiRequest(request, env) {
         const auth = await requireUser(request, env.DB);
         if (auth.response) return auth.response;
         const timestamp = now();
-        const result = await env.DB.prepare("UPDATE live_streams SET status = 'live', last_seen_at = ? WHERE id = ? AND user_id = ? AND status = 'starting'")
-          .bind(timestamp, liveId, auth.user.id)
+        const result = await env.DB.prepare("UPDATE live_streams SET published_at = COALESCE(published_at, ?), last_seen_at = ? WHERE id = ? AND user_id = ? AND status = 'live'")
+          .bind(timestamp, timestamp, liveId, auth.user.id)
           .run();
         if (!result.meta?.changes) {
-          const current = await env.DB.prepare("SELECT status FROM live_streams WHERE id = ? AND user_id = ?").bind(liveId, auth.user.id).first();
-          if (current?.status !== "live") return error(404, "LIVE_NOT_FOUND", "No encontramos tu directo.");
+          const current = await env.DB.prepare("SELECT status, published_at FROM live_streams WHERE id = ? AND user_id = ?").bind(liveId, auth.user.id).first();
+          if (current?.status !== "live" || !current?.published_at) return error(404, "LIVE_NOT_FOUND", "No encontramos tu directo.");
         }
         const live = await getLiveStream(env.DB, { liveId, viewerId: auth.user.id, liveBaseUrl: env.LIVE_WEBRTC_BASE_URL });
         return json({ live });
@@ -983,7 +1001,7 @@ export async function handleApiRequest(request, env) {
         const body = await readBody(request);
         const viewerKey = cleanText(body.viewerKey, 40).toLowerCase();
         if (!/^[a-f0-9]{32}$/.test(viewerKey)) return error(422, "INVALID_VIEWER", "No pudimos registrar al espectador.");
-        const active = await env.DB.prepare("SELECT id FROM live_streams WHERE id = ? AND status = 'live' AND last_seen_at > ?")
+        const active = await env.DB.prepare("SELECT id FROM live_streams WHERE id = ? AND status = 'live' AND published_at IS NOT NULL AND last_seen_at > ?")
           .bind(liveId, liveActiveCutoff())
           .first();
         if (!active) return error(404, "LIVE_ENDED", "El directo terminó.");
@@ -1030,7 +1048,7 @@ export async function handleApiRequest(request, env) {
       if (request.method === "POST" && action === "like") {
         const auth = await requireUser(request, env.DB);
         if (auth.response) return auth.response;
-        const active = await env.DB.prepare("SELECT id FROM live_streams WHERE id = ? AND status = 'live' AND last_seen_at > ?")
+        const active = await env.DB.prepare("SELECT id FROM live_streams WHERE id = ? AND status = 'live' AND published_at IS NOT NULL AND last_seen_at > ?")
           .bind(liveId, liveActiveCutoff())
           .first();
         if (!active) return error(404, "LIVE_ENDED", "El directo terminó.");
@@ -1047,7 +1065,7 @@ export async function handleApiRequest(request, env) {
       if (request.method === "POST" && action === "comments") {
         const auth = await requireUser(request, env.DB);
         if (auth.response) return auth.response;
-        const active = await env.DB.prepare("SELECT id FROM live_streams WHERE id = ? AND status = 'live' AND last_seen_at > ?")
+        const active = await env.DB.prepare("SELECT id FROM live_streams WHERE id = ? AND status = 'live' AND published_at IS NOT NULL AND last_seen_at > ?")
           .bind(liveId, liveActiveCutoff())
           .first();
         if (!active) return error(404, "LIVE_ENDED", "El directo terminó.");
