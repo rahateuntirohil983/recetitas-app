@@ -1,6 +1,6 @@
 <script setup>
 import { onBeforeUnmount, onMounted, ref } from "vue";
-import { PhChatCircleDots, PhEye, PhHeart, PhSpeakerHigh, PhSpeakerSlash, PhTrash } from "@phosphor-icons/vue";
+import { PhChatCircleDots, PhEye, PhHeart, PhShieldCheck, PhSpeakerHigh, PhSpeakerSlash, PhTrash, PhUserMinus } from "@phosphor-icons/vue";
 import { api } from "../lib/api.js";
 import { WhepReader } from "../lib/live-webrtc.js";
 import PigAvatar from "./PigAvatar.vue";
@@ -128,6 +128,18 @@ const deleteComment = async (comment) => {
   await refreshEvents();
 };
 
+const toggleModerator = async (comment) => {
+  await api.toggleLiveModerator(currentLive.value.id, comment.author.id).catch(() => null);
+  await refreshEvents();
+};
+
+const toggleBan = async (comment) => {
+  const action = comment.author.isBanned ? "desbloquear" : "bloquear";
+  if (!window.confirm(`¿${action[0].toUpperCase()}${action.slice(1)} a @${comment.author.handle} del chat?`)) return;
+  await api.toggleLiveBan(currentLive.value.id, comment.author.id).catch(() => null);
+  await refreshEvents();
+};
+
 const toggleSound = () => {
   muted.value = !muted.value;
   if (video.value) {
@@ -185,7 +197,11 @@ onBeforeUnmount(() => {
           <div v-for="comment in comments" :key="comment.id" class="group flex gap-3">
             <PigAvatar :index="comment.author.avatarIndex" :size="34" :label="`Avatar de ${comment.author.displayName}`" class="shrink-0" />
             <p class="min-w-0 flex-1 text-sm"><strong class="mr-1">@{{ comment.author.handle }}</strong><span class="break-words [overflow-wrap:anywhere] text-porcelain/75">{{ comment.body }}</span></p>
-            <button v-if="comment.author.id === viewerId" type="button" class="focus-ring self-start p-1 text-porcelain/45 hover:text-blush" aria-label="Eliminar comentario" @click="deleteComment(comment)"><PhTrash :size="18" /></button>
+            <div v-if="comment.author.id === viewerId || (currentLive.permissions?.canModerate && comment.author.id !== currentLive.author.id)" class="flex shrink-0 gap-1">
+              <button type="button" class="focus-ring self-start p-1 text-porcelain/45 hover:text-blush" aria-label="Eliminar comentario" @click="deleteComment(comment)"><PhTrash :size="18" /></button>
+              <button v-if="currentLive.permissions?.isOwner && comment.author.id !== currentLive.author.id" type="button" class="focus-ring self-start p-1 text-porcelain/45 hover:text-olive" :aria-label="comment.author.isModerator ? 'Quitar moderador' : 'Dar moderador'" @click="toggleModerator(comment)"><PhShieldCheck :size="18" :weight="comment.author.isModerator ? 'fill' : 'regular'" /></button>
+              <button v-if="currentLive.permissions?.canModerate && comment.author.id !== currentLive.author.id && (!comment.author.isModerator || currentLive.permissions?.isOwner)" type="button" class="focus-ring self-start p-1 text-porcelain/45 hover:text-blush" :aria-label="comment.author.isBanned ? 'Desbloquear del chat' : 'Bloquear del chat'" @click="toggleBan(comment)"><PhUserMinus :size="18" /></button>
+            </div>
           </div>
         </div>
         <form class="mt-4 grid gap-2" @submit.prevent="addComment">

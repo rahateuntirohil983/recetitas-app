@@ -117,6 +117,20 @@ const SCHEMA_STATEMENTS = [
     last_seen_at TEXT NOT NULL,
     PRIMARY KEY (live_id, viewer_key)
   )`,
+  `CREATE TABLE IF NOT EXISTS live_moderators (
+    live_id TEXT NOT NULL REFERENCES live_streams(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    granted_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (live_id, user_id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS live_bans (
+    live_id TEXT NOT NULL REFERENCES live_streams(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    banned_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (live_id, user_id)
+  )`,
   `CREATE TABLE IF NOT EXISTS credentials (
     user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     password_hash TEXT NOT NULL,
@@ -145,6 +159,7 @@ const SCHEMA_STATEMENTS = [
   "CREATE INDEX IF NOT EXISTS live_streams_status_seen_idx ON live_streams(status, last_seen_at DESC)",
   "CREATE INDEX IF NOT EXISTS live_comments_live_idx ON live_comments(live_id, created_at)",
   "CREATE INDEX IF NOT EXISTS live_viewers_seen_idx ON live_viewers(live_id, last_seen_at)",
+  "CREATE INDEX IF NOT EXISTS live_bans_live_idx ON live_bans(live_id, created_at DESC)",
   "CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id)",
   "CREATE INDEX IF NOT EXISTS sessions_expires_at_idx ON sessions(expires_at)",
   "CREATE INDEX IF NOT EXISTS auth_attempts_key_created_idx ON auth_attempts(attempt_key, created_at)",
@@ -623,6 +638,12 @@ const liveDto = (row, liveBaseUrl = "") => ({
   likeCount: Number(row.like_count || 0),
   commentCount: Number(row.comment_count || 0),
   liked: Boolean(row.liked_by_me),
+  permissions: {
+    isOwner: Boolean(row.viewer_is_owner),
+    isModerator: Boolean(row.viewer_is_moderator),
+    banned: Boolean(row.viewer_is_banned),
+    canModerate: Boolean(row.viewer_is_owner || row.viewer_is_moderator),
+  },
   author: {
     id: row.user_id,
     handle: row.handle,
@@ -641,22 +662,29 @@ const getLiveStream = async (db, { liveId = null, userId = null, viewerId = "", 
       (SELECT COUNT(*) FROM live_likes ll WHERE ll.live_id = ls.id) AS like_count,
       (SELECT COUNT(*) FROM live_comments lc WHERE lc.live_id = ls.id) AS comment_count,
       (SELECT COUNT(*) FROM live_viewers lv WHERE lv.live_id = ls.id AND lv.last_seen_at > ?) AS viewer_count,
-      EXISTS(SELECT 1 FROM live_likes ml WHERE ml.live_id = ls.id AND ml.user_id = ?) AS liked_by_me
+      EXISTS(SELECT 1 FROM live_likes ml WHERE ml.live_id = ls.id AND ml.user_id = ?) AS liked_by_me,
+      (ls.user_id = ?) AS viewer_is_owner,
+      EXISTS(SELECT 1 FROM live_moderators lm WHERE lm.live_id = ls.id AND lm.user_id = ?) AS viewer_is_moderator,
+      EXISTS(SELECT 1 FROM live_bans lb WHERE lb.live_id = ls.id AND lb.user_id = ?) AS viewer_is_banned
     FROM live_streams ls
     JOIN users u ON u.id = ls.user_id
     WHERE ${identityColumn} = ?
       ${includeEnded ? "" : "AND ls.status = 'live' AND ls.last_seen_at > ?"}
     ORDER BY ls.started_at DESC
     LIMIT 1`)
-    .bind(liveViewerCutoff(), viewerId, identity, ...(!includeEnded ? [liveActiveCutoff()] : []))
+    .bind(liveViewerCutoff(), viewerId, viewerId, viewerId, viewerId, identity, ...(!includeEnded ? [liveActiveCutoff()] : []))
     .first();
   return row ? liveDto(row, liveBaseUrl) : null;
 };
 
 const getLiveComments = async (db, liveId) => {
-  const result = await db.prepare(`SELECT lc.id, lc.body, lc.created_at, u.id AS author_id, u.handle, u.display_name, u.avatar_url
+  const result = await db.prepare(`SELECT lc.id, lc.body, lc.created_at, u.id AS author_id, u.handle, u.display_name, u.avatar_url,
+      (ls.user_id = u.id) AS author_is_owner,
+      EXISTS(SELECT 1 FROM live_moderators lm WHERE lm.live_id = lc.live_id AND lm.user_id = u.id) AS author_is_moderator,
+      EXISTS(SELECT 1 FROM live_bans lb WHERE lb.live_id = lc.live_id AND lb.user_id = u.id) AS author_is_banned
     FROM live_comments lc
     JOIN users u ON u.id = lc.author_id
+    JOIN live_streams ls ON ls.id = lc.live_id
     WHERE lc.live_id = ?
     ORDER BY lc.created_at ASC
     LIMIT 120`)
@@ -672,8 +700,40 @@ const getLiveComments = async (db, liveId) => {
       displayName: row.display_name,
       avatarUrl: publicAvatarUrl(row.avatar_url),
       avatarIndex: avatarIndexForRow({ id: row.author_id, avatar_url: row.avatar_url }),
+      isOwner: Boolean(row.author_is_owner),
+      isModerator: Boolean(row.author_is_moderator),
+      isBanned: Boolean(row.author_is_banned),
     },
   }));
+};
+
+const getLiveRole = async (db, liveId, userId) => {
+  if (!userId) return { isOwner: false, isModerator: false, banned: false };
+  const row = await db.prepare(`SELECT
+      (ls.user_id = ?) AS is_owner,
+      EXISTS(SELECT 1 FROM live_moderators lm WHERE lm.live_id = ls.id AND lm.user_id = ?) AS is_moderator,
+      EXISTS(SELECT 1 FROM live_bans lb WHERE lb.live_id = ls.id AND lb.user_id = ?) AS is_banned
+    FROM live_streams ls WHERE ls.id = ?`)
+    .bind(userId, userId, userId, liveId)
+    .first();
+  return {
+    isOwner: Boolean(row?.is_owner),
+    isModerator: Boolean(row?.is_moderator),
+    banned: Boolean(row?.is_banned),
+  };
+};
+
+const getLiveModeration = async (db, liveId) => {
+  const [moderators, bannedUsers] = await Promise.all([
+    db.prepare(`SELECT u.* FROM live_moderators lm JOIN users u ON u.id = lm.user_id
+      WHERE lm.live_id = ? ORDER BY lm.created_at ASC`).bind(liveId).all(),
+    db.prepare(`SELECT u.* FROM live_bans lb JOIN users u ON u.id = lb.user_id
+      WHERE lb.live_id = ? ORDER BY lb.created_at DESC`).bind(liveId).all(),
+  ]);
+  return {
+    moderators: (moderators.results || []).map((row) => userDto(row, { includeEmail: false })),
+    bannedUsers: (bannedUsers.results || []).map((row) => userDto(row, { includeEmail: false })),
+  };
 };
 
 const validateLive = (body) => {
@@ -811,11 +871,60 @@ export async function handleApiRequest(request, env) {
         .bind(commentId, liveId)
         .first();
       if (!comment) return error(404, "LIVE_COMMENT_NOT_FOUND", "No encontramos ese comentario.");
-      if (comment.author_id !== auth.user.id) return error(403, "LIVE_COMMENT_FORBIDDEN", "Solo podés borrar tus comentarios.");
-      await env.DB.prepare("DELETE FROM live_comments WHERE id = ? AND live_id = ? AND author_id = ?")
-        .bind(commentId, liveId, auth.user.id)
+      const role = await getLiveRole(env.DB, liveId, auth.user.id);
+      if (comment.author_id !== auth.user.id && !role.isOwner && !role.isModerator) {
+        return error(403, "LIVE_COMMENT_FORBIDDEN", "No tenés permiso para moderar este chat.");
+      }
+      await env.DB.prepare("DELETE FROM live_comments WHERE id = ? AND live_id = ?")
+        .bind(commentId, liveId)
         .run();
       return new Response(null, { status: 204 });
+    }
+
+    const liveUserActionMatch = path.match(/^\/api\/live\/([^/]+)\/users\/([^/]+)\/(ban|moderator)$/);
+    if (request.method === "POST" && liveUserActionMatch) {
+      const auth = await requireUser(request, env.DB);
+      if (auth.response) return auth.response;
+      const [, liveId, targetUserId, action] = liveUserActionMatch;
+      const actorRole = await getLiveRole(env.DB, liveId, auth.user.id);
+      if (!actorRole.isOwner && !(action === "ban" && actorRole.isModerator)) {
+        return error(403, "LIVE_MODERATION_FORBIDDEN", "No tenés permiso para hacer eso.");
+      }
+      const liveOwner = await env.DB.prepare("SELECT user_id FROM live_streams WHERE id = ?").bind(liveId).first();
+      if (!liveOwner) return error(404, "LIVE_NOT_FOUND", "No encontramos ese directo.");
+      if (targetUserId === liveOwner.user_id) return error(422, "LIVE_OWNER_PROTECTED", "No se puede moderar al dueño del directo.");
+      const target = await env.DB.prepare("SELECT id FROM users WHERE id = ?").bind(targetUserId).first();
+      if (!target) return error(404, "PROFILE_NOT_FOUND", "No encontramos a esa persona.");
+
+      if (action === "moderator") {
+        const existing = await env.DB.prepare("SELECT 1 AS found FROM live_moderators WHERE live_id = ? AND user_id = ?")
+          .bind(liveId, targetUserId)
+          .first();
+        if (existing) await env.DB.prepare("DELETE FROM live_moderators WHERE live_id = ? AND user_id = ?").bind(liveId, targetUserId).run();
+        else await env.DB.prepare("INSERT INTO live_moderators (live_id, user_id, granted_by, created_at) VALUES (?, ?, ?, ?)")
+          .bind(liveId, targetUserId, auth.user.id, now())
+          .run();
+        return json({ active: !existing });
+      }
+
+      const targetRole = await getLiveRole(env.DB, liveId, targetUserId);
+      if (actorRole.isModerator && targetRole.isModerator) {
+        return error(403, "LIVE_MODERATOR_PROTECTED", "Solo el dueño puede moderar a otro moderador.");
+      }
+      const existing = await env.DB.prepare("SELECT 1 AS found FROM live_bans WHERE live_id = ? AND user_id = ?")
+        .bind(liveId, targetUserId)
+        .first();
+      if (existing) {
+        await env.DB.prepare("DELETE FROM live_bans WHERE live_id = ? AND user_id = ?").bind(liveId, targetUserId).run();
+      } else {
+        await env.DB.batch([
+          env.DB.prepare("INSERT INTO live_bans (live_id, user_id, banned_by, created_at) VALUES (?, ?, ?, ?)")
+            .bind(liveId, targetUserId, auth.user.id, now()),
+          env.DB.prepare("DELETE FROM live_comments WHERE live_id = ? AND author_id = ?").bind(liveId, targetUserId),
+          env.DB.prepare("DELETE FROM live_viewers WHERE live_id = ? AND user_id = ?").bind(liveId, targetUserId),
+        ]);
+      }
+      return json({ active: !existing });
     }
 
     const liveMatch = path.match(/^\/api\/live\/([^/]+)\/(events|end|heartbeat|broadcaster-heartbeat|like|comments)$/);
@@ -829,7 +938,8 @@ export async function handleApiRequest(request, env) {
           .run();
         const live = await getLiveStream(env.DB, { liveId, viewerId: viewer?.id || "", liveBaseUrl: env.LIVE_WEBRTC_BASE_URL, includeEnded: true });
         if (!live) return error(404, "LIVE_NOT_FOUND", "No encontramos ese directo.");
-        return json({ live, comments: await getLiveComments(env.DB, liveId) });
+        const moderation = live.permissions.canModerate ? await getLiveModeration(env.DB, liveId) : null;
+        return json({ live, comments: await getLiveComments(env.DB, liveId), moderation });
       }
 
       if (request.method === "POST" && action === "heartbeat") {
@@ -840,6 +950,9 @@ export async function handleApiRequest(request, env) {
           .bind(liveId, liveActiveCutoff())
           .first();
         if (!active) return error(404, "LIVE_ENDED", "El directo terminó.");
+        if (viewer && (await getLiveRole(env.DB, liveId, viewer.id)).banned) {
+          return error(403, "LIVE_CHAT_BANNED", "Fuiste bloqueado de este chat.");
+        }
         const timestamp = now();
         await env.DB.batch([
           env.DB.prepare("DELETE FROM live_viewers WHERE last_seen_at < ?")
@@ -884,6 +997,7 @@ export async function handleApiRequest(request, env) {
           .bind(liveId, liveActiveCutoff())
           .first();
         if (!active) return error(404, "LIVE_ENDED", "El directo terminó.");
+        if ((await getLiveRole(env.DB, liveId, auth.user.id)).banned) return error(403, "LIVE_CHAT_BANNED", "Fuiste bloqueado de este chat.");
         const existing = await env.DB.prepare("SELECT 1 AS found FROM live_likes WHERE live_id = ? AND user_id = ?")
           .bind(liveId, auth.user.id)
           .first();
@@ -900,6 +1014,7 @@ export async function handleApiRequest(request, env) {
           .bind(liveId, liveActiveCutoff())
           .first();
         if (!active) return error(404, "LIVE_ENDED", "El directo terminó.");
+        if ((await getLiveRole(env.DB, liveId, auth.user.id)).banned) return error(403, "LIVE_CHAT_BANNED", "Fuiste bloqueado de este chat.");
         const body = cleanText((await readBody(request)).body, 180);
         if (!body) return error(422, "EMPTY_LIVE_COMMENT", "Escribí un comentario.");
         const commentId = createId("lvc");

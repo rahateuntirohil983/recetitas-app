@@ -11,6 +11,8 @@ export const tables = {
   liveComments: "live_comments",
   liveLikes: "live_likes",
   liveViewers: "live_viewers",
+  liveModerators: "live_moderators",
+  liveBans: "live_bans",
   follows: "follows",
   credentials: "credentials",
   sessions: "sessions",

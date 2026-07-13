@@ -10,6 +10,9 @@ import {
   PhMicrophone,
   PhMicrophoneSlash,
   PhStop,
+  PhShieldCheck,
+  PhTrash,
+  PhUserMinus,
   PhVideoCamera,
   PhVideoCameraSlash,
   PhX,
@@ -36,6 +39,7 @@ const hasMedia = ref(false);
 const errorMessage = ref("");
 const live = ref(null);
 const comments = ref([]);
+const moderation = ref({ moderators: [], bannedUsers: [] });
 const commentBody = ref("");
 
 let mediaStream = null;
@@ -154,6 +158,7 @@ const refreshEvents = async () => {
     const response = await api.liveEvents(live.value.id);
     live.value = { ...live.value, ...response.live };
     comments.value = response.comments;
+    if (response.moderation) moderation.value = response.moderation;
     if (response.live.status !== "live") await finish(false);
   } catch {
     // The next short poll can recover without interrupting the broadcast.
@@ -206,6 +211,45 @@ const addComment = async () => {
   } catch (failure) {
     errorMessage.value = failure.message;
   }
+};
+
+const deleteChatComment = async (comment) => {
+  try {
+    await api.deleteLiveComment(live.value.id, comment.id);
+    await refreshEvents();
+  } catch (failure) {
+    errorMessage.value = failure.message;
+  }
+};
+
+const toggleModerator = async (comment) => {
+  try {
+    await api.toggleLiveModerator(live.value.id, comment.author.id);
+    await refreshEvents();
+  } catch (failure) {
+    errorMessage.value = failure.message;
+  }
+};
+
+const toggleBan = async (comment) => {
+  const action = comment.author.isBanned ? "desbloquear" : "bloquear";
+  if (!window.confirm(`¿${action[0].toUpperCase()}${action.slice(1)} a @${comment.author.handle} del chat?`)) return;
+  try {
+    await api.toggleLiveBan(live.value.id, comment.author.id);
+    await refreshEvents();
+  } catch (failure) {
+    errorMessage.value = failure.message;
+  }
+};
+
+const toggleModeratorUser = async (user) => {
+  await api.toggleLiveModerator(live.value.id, user.id).catch((failure) => { errorMessage.value = failure.message; });
+  await refreshEvents();
+};
+
+const unbanUser = async (user) => {
+  await api.toggleLiveBan(live.value.id, user.id).catch((failure) => { errorMessage.value = failure.message; });
+  await refreshEvents();
 };
 
 const stopTimers = () => {
@@ -309,9 +353,22 @@ onBeforeUnmount(() => {
             </div>
             <div class="mt-5 max-h-56 space-y-3 overflow-y-auto border-y-2 border-charcoal/15 py-4" aria-live="polite">
               <p v-if="!comments.length" class="text-sm text-charcoal/50">Los comentarios van a aparecer acá.</p>
-              <div v-for="comment in comments" :key="comment.id" class="text-sm"><strong>@{{ comment.author.handle }}</strong> <span class="break-words">{{ comment.body }}</span></div>
+              <div v-for="comment in comments" :key="comment.id" class="border-b border-charcoal/12 pb-3 text-sm">
+                <div class="flex min-w-0 items-start gap-2"><p class="min-w-0 flex-1"><strong>@{{ comment.author.handle }}</strong><span v-if="comment.author.isModerator" class="ml-1 bg-olive px-1.5 py-0.5 text-[10px] font-bold">MOD</span> <span class="break-words [overflow-wrap:anywhere]">{{ comment.body }}</span></p>
+                  <div v-if="comment.author.id !== live.author.id" class="flex shrink-0 gap-1">
+                    <button type="button" class="focus-ring p-1 hover:bg-blush" title="Borrar mensaje" @click="deleteChatComment(comment)"><PhTrash :size="17" /></button>
+                    <button type="button" class="focus-ring p-1 hover:bg-olive" :title="comment.author.isModerator ? 'Quitar moderador' : 'Dar moderador'" @click="toggleModerator(comment)"><PhShieldCheck :size="17" :weight="comment.author.isModerator ? 'fill' : 'regular'" /></button>
+                    <button type="button" class="focus-ring p-1 hover:bg-blush" :title="comment.author.isBanned ? 'Desbloquear del chat' : 'Bloquear del chat'" @click="toggleBan(comment)"><PhUserMinus :size="17" /></button>
+                  </div>
+                </div>
+              </div>
             </div>
             <form class="mt-4 flex gap-2" @submit.prevent="addComment"><input v-model="commentBody" maxlength="180" class="min-w-0 flex-1 border-2 border-charcoal bg-cream px-3" placeholder="Responder en vivo" /><button class="bg-charcoal px-4 py-3 font-bold text-porcelain">Enviar</button></form>
+            <details v-if="moderation.moderators.length || moderation.bannedUsers.length" class="mt-5 border-2 border-charcoal/20 bg-cream px-4 py-3">
+              <summary class="cursor-pointer font-bold">Administrar chat</summary>
+              <div v-if="moderation.moderators.length" class="mt-4"><p class="text-xs font-bold uppercase tracking-[0.13em] text-olive-dark">Moderadores</p><div v-for="user in moderation.moderators" :key="user.id" class="mt-2 flex items-center justify-between gap-3 text-sm"><span class="truncate">@{{ user.handle }}</span><button type="button" class="font-bold underline" @click="toggleModeratorUser(user)">Quitar</button></div></div>
+              <div v-if="moderation.bannedUsers.length" class="mt-4"><p class="text-xs font-bold uppercase tracking-[0.13em] text-olive-dark">Bloqueados del chat</p><div v-for="user in moderation.bannedUsers" :key="user.id" class="mt-2 flex items-center justify-between gap-3 text-sm"><span class="truncate">@{{ user.handle }}</span><button type="button" class="font-bold underline" @click="unbanUser(user)">Desbloquear</button></div></div>
+            </details>
             <button type="button" class="focus-ring mt-6 inline-flex min-h-14 w-full items-center justify-between bg-charcoal px-5 font-bold text-porcelain" :disabled="connecting" @click="endLive"><span>Terminar directo</span><PhStop :size="23" weight="fill" /></button>
           </template>
 

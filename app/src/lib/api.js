@@ -331,6 +331,17 @@ export const api = {
     return null;
   },
 
+  async toggleLiveBan(liveId, userId) {
+    if (!useDemo) return request(`/api/live/${encodeURIComponent(liveId)}/users/${encodeURIComponent(userId)}/ban`, { method: "POST", body: "{}" });
+    demoLiveComments = demoLiveComments.filter((comment) => comment.author.id !== userId);
+    return { active: true };
+  },
+
+  async toggleLiveModerator(liveId, userId) {
+    if (!useDemo) return request(`/api/live/${encodeURIComponent(liveId)}/users/${encodeURIComponent(userId)}/moderator`, { method: "POST", body: "{}" });
+    return { active: true };
+  },
+
   async notifications() {
     if (!useDemo) return request("/api/notifications");
     await pause(120);
