@@ -26,7 +26,9 @@ const worker = {
           headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
         });
       }
-      if (/^\/app\/avatars\/pig-\d{2}\.webp$/.test(url.pathname)) {
+      const isPigImage = /^\/app\/avatars\/pig-\d{2}\.webp$/.test(url.pathname)
+        || /^\/app\/stickers\/pig-[a-z-]+\.webp$/.test(url.pathname);
+      if (isPigImage) {
         const headers = new Headers(asset.headers);
         headers.set("content-type", "image/webp");
         headers.set("cache-control", "public, max-age=31536000, immutable");
