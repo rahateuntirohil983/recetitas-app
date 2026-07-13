@@ -3,7 +3,9 @@ const SESSION_COOKIE = "recetitas_session";
 const SESSION_DAYS = 30;
 const PASSWORD_ITERATIONS = 100_000;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
 const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const ALLOWED_VIDEO_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime"]);
 
 const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS users (
@@ -269,30 +271,37 @@ const userDto = (row, { includeEmail = true } = {}) => ({
   avatarIndex: avatarIndexForRow(row),
 });
 
-const recipeDto = (row) => ({
-  id: row.id,
-  title: row.title,
-  summary: row.summary,
-  imageKey: row.image_key,
-  imageUrl: row.image_url || null,
-  cookMinutes: Number(row.cook_minutes),
-  servings: Number(row.servings),
-  ingredients: parseJsonArray(row.ingredients_json),
-  steps: parseJsonArray(row.steps_json),
-  createdAt: row.created_at,
-  likeCount: Number(row.like_count || 0),
-  commentCount: Number(row.comment_count || 0),
-  liked: Boolean(row.liked_by_me),
-  saved: Boolean(row.saved_by_me),
-  author: {
-    id: row.author_id,
-    handle: row.handle,
-    displayName: row.display_name,
-    avatarUrl: publicAvatarUrl(row.avatar_url),
-    avatarIndex: avatarIndexForRow({ id: row.author_id, avatar_url: row.avatar_url }),
-    followed: Boolean(row.author_followed),
-  },
-});
+const isVideoMediaUrl = (value) => /\.mp4(?:$|[?#])/i.test(String(value || ""));
+
+const recipeDto = (row) => {
+  const mediaUrl = row.image_url || null;
+  const videoMedia = isVideoMediaUrl(mediaUrl);
+  return {
+    id: row.id,
+    title: row.title,
+    summary: row.summary,
+    imageKey: row.image_key,
+    imageUrl: videoMedia ? null : mediaUrl,
+    videoUrl: videoMedia ? mediaUrl : null,
+    cookMinutes: Number(row.cook_minutes),
+    servings: Number(row.servings),
+    ingredients: parseJsonArray(row.ingredients_json),
+    steps: parseJsonArray(row.steps_json),
+    createdAt: row.created_at,
+    likeCount: Number(row.like_count || 0),
+    commentCount: Number(row.comment_count || 0),
+    liked: Boolean(row.liked_by_me),
+    saved: Boolean(row.saved_by_me),
+    author: {
+      id: row.author_id,
+      handle: row.handle,
+      displayName: row.display_name,
+      avatarUrl: publicAvatarUrl(row.avatar_url),
+      avatarIndex: avatarIndexForRow({ id: row.author_id, avatar_url: row.avatar_url }),
+      followed: Boolean(row.author_followed),
+    },
+  };
+};
 
 const ensureSchema = async (db) => {
   if (!schemaReady) {
@@ -462,11 +471,18 @@ const validateRecipe = (body, mediaBaseUrl = "") => {
   const servings = Number(body.servings);
   const imageKey = IMAGE_KEYS.has(body.imageKey) ? body.imageKey : "pumpkin";
   const rawImageUrl = cleanText(body.imageUrl, 500);
+  const rawVideoUrl = cleanText(body.videoUrl, 500);
   const normalizedMediaBase = String(mediaBaseUrl || "").replace(/\/$/, "");
   const imageUrl = rawImageUrl
     && /^https:\/\//i.test(rawImageUrl)
     && (!normalizedMediaBase || rawImageUrl.startsWith(`${normalizedMediaBase}/files/`))
     ? rawImageUrl
+    : null;
+  const videoUrl = rawVideoUrl
+    && /^https:\/\//i.test(rawVideoUrl)
+    && /\.mp4(?:$|[?#])/i.test(rawVideoUrl)
+    && (!normalizedMediaBase || rawVideoUrl.startsWith(`${normalizedMediaBase}/files/`))
+    ? rawVideoUrl
     : null;
 
   if (title.length < 3) return { error: "El nombre de la receta debe tener al menos 3 caracteres." };
@@ -474,6 +490,8 @@ const validateRecipe = (body, mediaBaseUrl = "") => {
   if (ingredients.length === 0) return { error: "Agregá al menos un ingrediente." };
   if (steps.length === 0) return { error: "Agregá al menos un paso." };
   if (rawImageUrl && !imageUrl) return { error: "La imagen de la receta no es válida." };
+  if (rawVideoUrl && !videoUrl) return { error: "El video de la receta no es válido." };
+  if (imageUrl && videoUrl) return { error: "Elegí una foto o un video, no ambos." };
   if (!Number.isInteger(cookMinutes) || cookMinutes < 1 || cookMinutes > 1440) {
     return { error: "El tiempo de cocción no es válido." };
   }
@@ -481,7 +499,7 @@ const validateRecipe = (body, mediaBaseUrl = "") => {
     return { error: "La cantidad de porciones no es válida." };
   }
 
-  return { title, summary, ingredients, steps, cookMinutes, servings, imageKey, imageUrl };
+  return { title, summary, ingredients, steps, cookMinutes, servings, imageKey, imageUrl, videoUrl };
 };
 
 export async function handleApiRequest(request, env) {
@@ -513,22 +531,19 @@ export async function handleApiRequest(request, env) {
       const auth = await requireUser(request, env.DB);
       if (auth.response) return auth.response;
       if (!env.MEDIA_UPLOAD_URL || !env.MEDIA_UPLOAD_TOKEN) {
-        return error(503, "MEDIA_UNAVAILABLE", "La subida de imágenes todavía no está disponible.");
+        return error(503, "MEDIA_UNAVAILABLE", "La subida de archivos todavía no está disponible.");
       }
 
       const contentType = String(request.headers.get("content-type") || "").split(";")[0].toLowerCase();
       const contentLength = Number(request.headers.get("content-length") || 0);
-      if (!ALLOWED_IMAGE_TYPES.has(contentType)) {
-        return error(415, "UNSUPPORTED_IMAGE", "Usá una imagen JPG, PNG o WebP.");
-      }
-      if (contentLength > MAX_IMAGE_BYTES) {
-        return error(413, "IMAGE_TOO_LARGE", "La imagen puede pesar hasta 8 MB.");
-      }
+      const mediaType = ALLOWED_IMAGE_TYPES.has(contentType) ? "image" : ALLOWED_VIDEO_TYPES.has(contentType) ? "video" : "";
+      const maxBytes = mediaType === "video" ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES;
+      if (!mediaType) return error(415, "UNSUPPORTED_MEDIA", "Usá una foto JPG, PNG o WebP, o un video MP4, WebM o MOV.");
+      if (contentLength > maxBytes) return error(413, "MEDIA_TOO_LARGE", mediaType === "video" ? "El video puede pesar hasta 50 MB." : "La imagen puede pesar hasta 8 MB.");
 
       const bytes = await request.arrayBuffer();
-      if (!bytes.byteLength || bytes.byteLength > MAX_IMAGE_BYTES) {
-        return error(bytes.byteLength ? 413 : 422, bytes.byteLength ? "IMAGE_TOO_LARGE" : "EMPTY_IMAGE", bytes.byteLength ? "La imagen puede pesar hasta 8 MB." : "Elegí una imagen antes de subirla.");
-      }
+      if (!bytes.byteLength) return error(422, "EMPTY_MEDIA", "Elegí un archivo antes de subirlo.");
+      if (bytes.byteLength > maxBytes) return error(413, "MEDIA_TOO_LARGE", mediaType === "video" ? "El video puede pesar hasta 50 MB." : "La imagen puede pesar hasta 8 MB.");
 
       const upstream = await fetch(env.MEDIA_UPLOAD_URL, {
         method: "POST",
@@ -541,14 +556,15 @@ export async function handleApiRequest(request, env) {
       });
       const uploaded = await upstream.json().catch(() => null);
       if (!upstream.ok || !uploaded?.url) {
-        return error(502, "UPLOAD_FAILED", "No pudimos guardar la imagen. Probá nuevamente.");
+        if (uploaded?.error === "video_too_long") return error(422, "VIDEO_TOO_LONG", "El video puede durar hasta 35 segundos.");
+        return error(502, "UPLOAD_FAILED", mediaType === "video" ? "No pudimos procesar el video. Probá nuevamente." : "No pudimos guardar la imagen. Probá nuevamente.");
       }
 
       const mediaOrigin = new URL(env.MEDIA_UPLOAD_URL).origin;
       if (!String(uploaded.url).startsWith(`${mediaOrigin}/files/`)) {
-        return error(502, "INVALID_MEDIA_RESPONSE", "El servidor de imágenes devolvió una respuesta inválida.");
+        return error(502, "INVALID_MEDIA_RESPONSE", "El servidor de archivos devolvió una respuesta inválida.");
       }
-      return json({ imageUrl: uploaded.url }, 201);
+      return json(mediaType === "video" ? { videoUrl: uploaded.url } : { imageUrl: uploaded.url }, 201);
     }
 
     if (request.method === "POST" && path === "/api/auth/register") {
@@ -710,7 +726,7 @@ export async function handleApiRequest(request, env) {
           recipe.title,
           recipe.summary,
           recipe.imageKey,
-          recipe.imageUrl,
+          recipe.videoUrl || recipe.imageUrl,
           recipe.cookMinutes,
           recipe.servings,
           JSON.stringify(recipe.ingredients),
@@ -795,16 +811,17 @@ export async function handleApiRequest(request, env) {
         const auth = await requireUser(request, env.DB);
         if (auth.response) return auth.response;
         if (recipe.author.id !== auth.user.id) return error(403, "NOT_OWNER", "Solo podés borrar tus recetas.");
-        if (recipe.imageUrl && env.MEDIA_UPLOAD_URL && env.MEDIA_UPLOAD_TOKEN) {
+        const mediaUrl = recipe.videoUrl || recipe.imageUrl;
+        if (mediaUrl && env.MEDIA_UPLOAD_URL && env.MEDIA_UPLOAD_TOKEN) {
           const deleted = await fetch(new URL("/delete", env.MEDIA_UPLOAD_URL), {
             method: "DELETE",
             headers: {
               authorization: `Bearer ${env.MEDIA_UPLOAD_TOKEN}`,
               "x-user-id": auth.user.id,
-              "x-file-url": recipe.imageUrl,
+              "x-file-url": mediaUrl,
             },
           });
-          if (!deleted.ok) return error(502, "MEDIA_DELETE_FAILED", "No pudimos eliminar la imagen. Probá nuevamente.");
+          if (!deleted.ok) return error(502, "MEDIA_DELETE_FAILED", "No pudimos eliminar el archivo. Probá nuevamente.");
         }
         await env.DB.prepare("DELETE FROM recipes WHERE id = ?").bind(recipeId).run();
         return new Response(null, { status: 204 });

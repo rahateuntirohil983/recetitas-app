@@ -10,6 +10,7 @@ import {
   PhUsers,
 } from "@phosphor-icons/vue";
 import PigAvatar from "./PigAvatar.vue";
+import RecipeVideo from "./RecipeVideo.vue";
 
 defineProps({
   recipe: { type: Object, required: true },
@@ -45,7 +46,8 @@ const openCard = (event, recipe) => {
     </header>
 
     <figure class="relative aspect-[16/10] overflow-hidden bg-cream">
-      <img v-if="recipe.imageUrl" :src="recipe.imageUrl" :alt="recipe.title" class="h-full w-full object-cover transition duration-500 hover:scale-[1.02]" loading="lazy" decoding="async" />
+      <RecipeVideo v-if="recipe.videoUrl" :src="recipe.videoUrl" :title="`Video de ${recipe.title}`" compact @click.stop />
+      <img v-else-if="recipe.imageUrl" :src="recipe.imageUrl" :alt="recipe.title" class="h-full w-full object-cover transition duration-500 hover:scale-[1.02]" loading="lazy" decoding="async" />
       <div v-else class="grid h-full place-items-center bg-olive/45 text-center text-charcoal" role="img" :aria-label="`${recipe.title}, sin foto`">
         <div><PhCookingPot :size="72" weight="thin" class="mx-auto" aria-hidden="true" /><p class="mt-3 font-display text-2xl font-bold">Receta sin foto.</p></div>
       </div>

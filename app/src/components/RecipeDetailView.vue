@@ -11,6 +11,7 @@ import {
   PhUsers,
 } from "@phosphor-icons/vue";
 import PigAvatar from "./PigAvatar.vue";
+import RecipeVideo from "./RecipeVideo.vue";
 
 const props = defineProps({
   recipe: { type: Object, default: null },
@@ -46,7 +47,8 @@ const canDelete = computed(() => Boolean(props.viewerId && props.recipe?.author?
       </header>
 
       <figure class="aspect-[4/3] overflow-hidden bg-olive/40 sm:aspect-[16/9]">
-        <img v-if="recipe.imageUrl" :src="recipe.imageUrl" :alt="recipe.title" class="h-full w-full object-cover" decoding="async" />
+        <RecipeVideo v-if="recipe.videoUrl" :src="recipe.videoUrl" :title="`Video de ${recipe.title}`" />
+        <img v-else-if="recipe.imageUrl" :src="recipe.imageUrl" :alt="recipe.title" class="h-full w-full object-cover" decoding="async" />
         <div v-else class="grid h-full place-items-center text-center text-charcoal" role="img" :aria-label="`${recipe.title}, sin foto`">
           <div><PhCookingPot :size="88" weight="thin" class="mx-auto" aria-hidden="true" /><p class="mt-3 font-display text-3xl font-bold">Receta sin foto.</p></div>
         </div>

@@ -316,7 +316,8 @@ const deleteComment = async (comment) => {
 const publishRecipe = async (payload) => {
   busy.value = true;
   try {
-    const { imageFile, ...recipePayload } = payload;
+    const { imageFile, videoFile, ...recipePayload } = payload;
+    if (videoFile) recipePayload.videoUrl = (await api.uploadVideo(videoFile)).videoUrl;
     if (imageFile) recipePayload.imageUrl = (await api.uploadImage(imageFile)).imageUrl;
     const response = await api.createRecipe(recipePayload);
     recipes.value = [response.recipe, ...recipes.value];

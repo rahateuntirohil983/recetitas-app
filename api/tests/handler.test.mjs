@@ -108,6 +108,34 @@ test("only accepts recipe images from the configured media service", () => {
   assert.match(recipe.error, /imagen.*no es válida/i);
 });
 
+test("accepts a processed recipe video from the configured media service", () => {
+  const recipe = __test.validateRecipe({
+    title: "Pan casero",
+    summary: "Una receta para todos los domingos.",
+    cookMinutes: 40,
+    servings: 4,
+    ingredients: ["Harina"],
+    steps: ["Amasar"],
+    videoUrl: "https://media-recetitas.hex-rp.com/files/user/video.mp4",
+  }, "https://media-recetitas.hex-rp.com");
+  assert.equal(recipe.videoUrl, "https://media-recetitas.hex-rp.com/files/user/video.mp4");
+  assert.equal(recipe.error, undefined);
+});
+
+test("rejects recipes that attach a photo and a video together", () => {
+  const recipe = __test.validateRecipe({
+    title: "Pan casero",
+    summary: "Una receta para todos los domingos.",
+    cookMinutes: 40,
+    servings: 4,
+    ingredients: ["Harina"],
+    steps: ["Amasar"],
+    imageUrl: "https://media-recetitas.hex-rp.com/files/user/photo.webp",
+    videoUrl: "https://media-recetitas.hex-rp.com/files/user/video.mp4",
+  }, "https://media-recetitas.hex-rp.com");
+  assert.match(recipe.error, /foto o un video/i);
+});
+
 test("keeps pig avatar assignment stable and within the 64-image atlas", () => {
   assert.equal(__test.avatarIndexForRow({ id: "user-1", avatar_url: "pig:63" }), 63);
   const first = __test.avatarIndexForRow({ id: "legacy-user", avatar_url: null });

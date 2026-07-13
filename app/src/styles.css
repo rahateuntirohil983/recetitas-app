@@ -157,6 +157,28 @@ select:focus-visible {
   background: #999e76;
 }
 
+.video-control {
+  display: inline-grid;
+  min-width: 2.4rem;
+  height: 2.4rem;
+  place-items: center;
+  border: 1px solid rgba(249, 245, 243, 0.24);
+  color: #f9f5f3;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.video-control:hover,
+.video-control:focus-visible {
+  color: #242421;
+  background: #e3b4b9;
+}
+
+.video-progress {
+  height: 0.35rem;
+  cursor: pointer;
+  accent-color: #e3b4b9;
+}
+
 .composer-prompt,
 .profile-note,
 .login-sheet,

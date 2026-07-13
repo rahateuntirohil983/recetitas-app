@@ -132,7 +132,8 @@ export const api = {
     const recipe = {
       id: `recipe_${crypto.randomUUID()}`,
       ...payload,
-      imageUrl: null,
+      imageUrl: payload.imageUrl || null,
+      videoUrl: payload.videoUrl || null,
       createdAt: new Date().toISOString(),
       likeCount: 0,
       commentCount: 0,
@@ -161,6 +162,16 @@ export const api = {
     });
     await pause(320);
     return { imageUrl: URL.createObjectURL(file) };
+  },
+
+  async uploadVideo(file) {
+    if (!useDemo) return request("/api/uploads", {
+      method: "POST",
+      headers: { "content-type": file.type },
+      body: file,
+    });
+    await pause(420);
+    return { videoUrl: URL.createObjectURL(file) };
   },
 
   async toggleLike(recipeId) {

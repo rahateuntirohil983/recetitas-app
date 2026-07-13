@@ -1,8 +1,8 @@
 <script setup>
 import { nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
-import { PhArrowRight, PhImageSquare, PhTrash, PhUploadSimple, PhX } from "@phosphor-icons/vue";
+import { PhArrowRight, PhImageSquare, PhRecord, PhStopCircle, PhTrash, PhUploadSimple, PhVideoCamera, PhX } from "@phosphor-icons/vue";
 
-defineProps({ open: { type: Boolean, default: false }, busy: { type: Boolean, default: false } });
+const props = defineProps({ open: { type: Boolean, default: false }, busy: { type: Boolean, default: false } });
 const emit = defineEmits(["close", "submit"]);
 
 const error = ref("");
@@ -14,6 +14,19 @@ const fieldErrors = reactive({ title: "", summary: "", cookMinutes: "", servings
 const imageFile = ref(null);
 const imagePreview = ref("");
 const imageError = ref("");
+const mediaMode = ref("image");
+const videoFile = ref(null);
+const videoPreview = ref("");
+const videoError = ref("");
+const cameraPreview = ref(null);
+const recording = ref(false);
+const recordingSeconds = ref(0);
+let cameraStream = null;
+let mediaRecorder = null;
+let recordingChunks = [];
+let recordingInterval = 0;
+let recordingTimeout = 0;
+let discardRecording = false;
 const form = reactive({
   title: "",
   summary: "",
@@ -38,6 +51,7 @@ const chooseImage = (event) => {
     event.target.value = "";
     return;
   }
+  clearVideo();
   if (imagePreview.value) URL.revokeObjectURL(imagePreview.value);
   imageFile.value = file;
   imagePreview.value = URL.createObjectURL(file);
@@ -50,9 +64,139 @@ const clearImage = () => {
   imageError.value = "";
 };
 
+const clearRecordingTimers = () => {
+  window.clearInterval(recordingInterval);
+  window.clearTimeout(recordingTimeout);
+  recordingInterval = 0;
+  recordingTimeout = 0;
+};
+
+const stopCamera = () => {
+  cameraStream?.getTracks().forEach((track) => track.stop());
+  cameraStream = null;
+  if (cameraPreview.value) cameraPreview.value.srcObject = null;
+};
+
+const clearVideo = () => {
+  if (videoPreview.value) URL.revokeObjectURL(videoPreview.value);
+  videoFile.value = null;
+  videoPreview.value = "";
+  videoError.value = "";
+};
+
+const readVideoDuration = (file) => new Promise((resolve, reject) => {
+  const preview = document.createElement("video");
+  const url = URL.createObjectURL(file);
+  preview.preload = "metadata";
+  preview.onloadedmetadata = () => {
+    const value = preview.duration;
+    URL.revokeObjectURL(url);
+    Number.isFinite(value) ? resolve(value) : reject(new Error("INVALID_DURATION"));
+  };
+  preview.onerror = () => {
+    URL.revokeObjectURL(url);
+    reject(new Error("INVALID_VIDEO"));
+  };
+  preview.src = url;
+});
+
+const setVideoFile = async (file) => {
+  videoError.value = "";
+  if (!file) return false;
+  if (!["video/mp4", "video/webm", "video/quicktime"].includes(file.type)) {
+    videoError.value = "Elegí un video MP4, WebM o MOV.";
+    return false;
+  }
+  if (file.size > 50 * 1024 * 1024) {
+    videoError.value = "El video puede pesar hasta 50 MB.";
+    return false;
+  }
+  try {
+    const duration = await readVideoDuration(file);
+    if (duration > 35.25) {
+      videoError.value = "El video puede durar hasta 35 segundos.";
+      return false;
+    }
+  } catch {
+    videoError.value = "No pudimos leer ese video.";
+    return false;
+  }
+  clearImage();
+  clearVideo();
+  videoFile.value = file;
+  videoPreview.value = URL.createObjectURL(file);
+  return true;
+};
+
+const chooseVideo = async (event) => {
+  const file = event.target.files?.[0] || null;
+  if (!await setVideoFile(file)) event.target.value = "";
+};
+
+const stopRecording = () => {
+  clearRecordingTimers();
+  if (mediaRecorder?.state === "recording") mediaRecorder.stop();
+};
+
+const cancelRecording = () => {
+  discardRecording = true;
+  stopRecording();
+  stopCamera();
+  recording.value = false;
+  recordingSeconds.value = 0;
+};
+
+const startRecording = async () => {
+  videoError.value = "";
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+    videoError.value = "Este navegador no permite grabar acá. Podés usar Elegir video.";
+    return;
+  }
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 720 }, height: { ideal: 1280 } },
+      audio: true,
+    });
+    const candidates = ["video/mp4;codecs=h264,aac", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
+    const mimeType = candidates.find((type) => MediaRecorder.isTypeSupported(type));
+    mediaRecorder = new MediaRecorder(cameraStream, mimeType ? { mimeType } : undefined);
+    recordingChunks = [];
+    discardRecording = false;
+    mediaRecorder.ondataavailable = (event) => { if (event.data.size) recordingChunks.push(event.data); };
+    mediaRecorder.onerror = () => { videoError.value = "La grabación se interrumpió. Probá otra vez."; cancelRecording(); };
+    mediaRecorder.onstop = async () => {
+      clearRecordingTimers();
+      stopCamera();
+      recording.value = false;
+      recordingSeconds.value = 0;
+      if (discardRecording || !recordingChunks.length) return;
+      const type = String(mediaRecorder.mimeType || recordingChunks[0]?.type || "video/webm").split(";")[0];
+      const extension = type === "video/mp4" ? "mp4" : "webm";
+      const blob = new Blob(recordingChunks, { type });
+      await setVideoFile(new File([blob], `recetita-${Date.now()}.${extension}`, { type }));
+    };
+    recording.value = true;
+    recordingSeconds.value = 0;
+    await nextTick();
+    if (cameraPreview.value) cameraPreview.value.srcObject = cameraStream;
+    mediaRecorder.start(250);
+    const startedAt = Date.now();
+    recordingInterval = window.setInterval(() => { recordingSeconds.value = Math.min(35, Math.floor((Date.now() - startedAt) / 1000)); }, 250);
+    recordingTimeout = window.setTimeout(stopRecording, 35_000);
+  } catch {
+    stopCamera();
+    recording.value = false;
+    videoError.value = "No pudimos acceder a la cámara y al micrófono.";
+  }
+};
+
 onBeforeUnmount(() => {
   if (imagePreview.value) URL.revokeObjectURL(imagePreview.value);
+  if (videoPreview.value) URL.revokeObjectURL(videoPreview.value);
+  cancelRecording();
 });
+
+watch(() => props.open, (open) => { if (!open && recording.value) cancelRecording(); });
 
 [
   ["title", () => form.title],
@@ -97,7 +241,7 @@ const submit = async () => {
     return;
   }
   error.value = "";
-  emit("submit", { ...form, title: form.title.trim(), summary: form.summary.trim(), ingredients, steps, imageFile: imageFile.value });
+  emit("submit", { ...form, title: form.title.trim(), summary: form.summary.trim(), ingredients, steps, imageFile: imageFile.value, videoFile: videoFile.value });
 };
 </script>
 
@@ -130,18 +274,53 @@ const submit = async () => {
           </div>
 
           <div class="field-label">
-            Foto de la receta <span class="font-normal text-charcoal/55">Opcional · JPG, PNG o WebP · máximo 8 MB</span>
-            <div v-if="imagePreview" class="relative overflow-hidden border-2 border-charcoal bg-cream">
-              <img :src="imagePreview" alt="Vista previa de la receta" class="aspect-[16/9] w-full object-cover" />
-              <button type="button" class="focus-ring absolute right-3 top-3 inline-flex min-h-11 items-center gap-2 bg-charcoal px-4 text-sm font-semibold text-porcelain" @click="clearImage"><PhTrash :size="18" /> Quitar</button>
+            Foto o video <span class="font-normal text-charcoal/55">Opcional · un video puede durar hasta 35 segundos</span>
+            <div class="grid grid-cols-2 border-2 border-charcoal bg-cream p-1">
+              <button type="button" class="focus-ring inline-flex min-h-11 items-center justify-center gap-2 font-semibold" :class="mediaMode === 'image' ? 'bg-charcoal text-porcelain' : 'text-charcoal'" @click="mediaMode = 'image'; clearVideo(); cancelRecording()"><PhImageSquare :size="20" /> Foto</button>
+              <button type="button" class="focus-ring inline-flex min-h-11 items-center justify-center gap-2 font-semibold" :class="mediaMode === 'video' ? 'bg-charcoal text-porcelain' : 'text-charcoal'" @click="mediaMode = 'video'; clearImage()"><PhVideoCamera :size="20" /> Video</button>
             </div>
-            <label v-else class="focus-ring flex min-h-36 cursor-pointer flex-col items-center justify-center gap-3 border-2 border-dashed border-charcoal bg-cream px-5 py-7 text-center transition hover:bg-blush">
-              <PhImageSquare :size="38" weight="thin" aria-hidden="true" />
-              <span class="font-semibold">Subí una foto de tu plato</span>
-              <span class="inline-flex items-center gap-2 text-sm font-medium text-charcoal/60"><PhUploadSimple :size="17" /> Elegir imagen</span>
-              <input type="file" accept="image/jpeg,image/png,image/webp" class="sr-only" @change="chooseImage" />
-            </label>
-            <span v-if="imageError" class="field-error">{{ imageError }}</span>
+
+            <template v-if="mediaMode === 'image'">
+              <div v-if="imagePreview" class="relative overflow-hidden border-2 border-charcoal bg-cream">
+                <img :src="imagePreview" alt="Vista previa de la receta" class="aspect-[16/9] w-full object-cover" />
+                <button type="button" class="focus-ring absolute right-3 top-3 inline-flex min-h-11 items-center gap-2 bg-charcoal px-4 text-sm font-semibold text-porcelain" @click="clearImage"><PhTrash :size="18" /> Quitar</button>
+              </div>
+              <label v-else class="focus-ring flex min-h-36 cursor-pointer flex-col items-center justify-center gap-3 border-2 border-dashed border-charcoal bg-cream px-5 py-7 text-center transition hover:bg-blush">
+                <PhImageSquare :size="38" weight="thin" aria-hidden="true" />
+                <span class="font-semibold">Subí una foto de tu plato</span>
+                <span class="inline-flex items-center gap-2 text-sm font-medium text-charcoal/60"><PhUploadSimple :size="17" /> JPG, PNG o WebP · 8 MB</span>
+                <input type="file" accept="image/jpeg,image/png,image/webp" class="sr-only" @change="chooseImage" />
+              </label>
+              <span v-if="imageError" class="field-error">{{ imageError }}</span>
+            </template>
+
+            <template v-else>
+              <div v-if="recording" class="overflow-hidden border-2 border-charcoal bg-charcoal text-porcelain">
+                <video ref="cameraPreview" autoplay muted playsinline class="aspect-[9/16] max-h-[520px] w-full object-cover" />
+                <div class="flex items-center justify-between gap-3 bg-charcoal px-4 py-3">
+                  <span class="inline-flex items-center gap-2 font-semibold"><span class="size-3 animate-pulse rounded-full bg-blush" /> Grabando {{ recordingSeconds }} / 35 s</span>
+                  <button type="button" class="focus-ring inline-flex min-h-11 items-center gap-2 bg-porcelain px-4 font-semibold text-charcoal" @click="stopRecording"><PhStopCircle :size="20" weight="fill" /> Detener</button>
+                </div>
+              </div>
+              <div v-else-if="videoPreview" class="relative overflow-hidden border-2 border-charcoal bg-charcoal">
+                <video :src="videoPreview" controls playsinline class="aspect-[9/16] max-h-[520px] w-full object-contain" />
+                <button type="button" class="focus-ring absolute right-3 top-3 inline-flex min-h-11 items-center gap-2 bg-porcelain px-4 text-sm font-semibold text-charcoal" @click="clearVideo"><PhTrash :size="18" /> Quitar</button>
+              </div>
+              <div v-else class="grid gap-3 sm:grid-cols-2">
+                <button type="button" class="focus-ring flex min-h-36 flex-col items-center justify-center gap-3 border-2 border-charcoal bg-blush px-5 py-6 text-center hover:bg-olive" @click="startRecording">
+                  <PhRecord :size="38" weight="fill" aria-hidden="true" />
+                  <span class="font-semibold">Grabar ahora</span>
+                  <span class="text-sm font-medium text-charcoal/65">Se detiene a los 35 segundos</span>
+                </button>
+                <label class="focus-ring flex min-h-36 cursor-pointer flex-col items-center justify-center gap-3 border-2 border-dashed border-charcoal bg-cream px-5 py-6 text-center hover:bg-blush">
+                  <PhUploadSimple :size="38" weight="thin" aria-hidden="true" />
+                  <span class="font-semibold">Elegir un video</span>
+                  <span class="text-sm font-medium text-charcoal/60">MP4, WebM o MOV · 50 MB</span>
+                  <input type="file" accept="video/mp4,video/webm,video/quicktime" class="sr-only" @change="chooseVideo" />
+                </label>
+              </div>
+              <span v-if="videoError" class="field-error">{{ videoError }}</span>
+            </template>
           </div>
           <div class="grid gap-5 sm:grid-cols-2">
             <label class="field-label">Ingredientes, uno por línea<textarea ref="ingredientsInput" v-model="form.ingredients" class="field-input min-h-40 resize-y" :class="fieldErrors.ingredients && 'field-input--error'" required placeholder="4 tomates\n2 dientes de ajo\nAceite de oliva" /><span v-if="fieldErrors.ingredients" class="field-error">{{ fieldErrors.ingredients }}</span></label>
