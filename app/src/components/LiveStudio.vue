@@ -23,15 +23,18 @@ import { WhipPublisher } from "../lib/live-webrtc.js";
 const emit = defineEmits(["close", "started", "ended", "login"]);
 
 const preview = ref(null);
+const titleInput = ref(null);
 const title = ref("");
 const description = ref("");
 const cameras = ref([]);
 const selectedCamera = ref("");
 const facing = ref("user");
 const requestingCamera = ref(true);
+const switchingCamera = ref(false);
 const connecting = ref(false);
 const isLive = ref(false);
 const muted = ref(false);
+const hasAudio = ref(false);
 const cameraPaused = ref(false);
 const torchAvailable = ref(false);
 const torchOn = ref(false);
@@ -47,7 +50,13 @@ let publisher = null;
 let heartbeatTimer = null;
 let eventsTimer = null;
 
-const canStart = computed(() => Boolean(mediaStream?.getVideoTracks().length && title.value.trim().length >= 3 && !connecting.value));
+const canStart = computed(() => Boolean(hasMedia.value && title.value.trim().length >= 3 && !connecting.value && !requestingCamera.value));
+const startHint = computed(() => {
+  if (requestingCamera.value) return "Esperando el permiso de la cámara…";
+  if (!hasMedia.value) return "Necesitamos una cámara para transmitir.";
+  if (title.value.trim().length < 3) return "Escribí un título de al menos 3 caracteres.";
+  return "Todo listo para salir en vivo.";
+});
 
 const attachPreview = async () => {
   await nextTick();
@@ -58,6 +67,7 @@ const attachPreview = async () => {
 };
 
 const refreshDevices = async () => {
+  if (!navigator.mediaDevices?.enumerateDevices) return;
   const devices = await navigator.mediaDevices.enumerateDevices();
   cameras.value = devices.filter((device) => device.kind === "videoinput");
   const current = mediaStream?.getVideoTracks()[0]?.getSettings()?.deviceId;
@@ -74,60 +84,129 @@ const updateTorchSupport = () => {
 const requestInitialCamera = async () => {
   requestingCamera.value = true;
   errorMessage.value = "";
+  stopMedia();
   try {
-    mediaStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: facing.value }, width: { ideal: 1280 }, height: { ideal: 720 } },
-      audio: { echoCancellation: true, noiseSuppression: true },
-    });
+    if (!navigator.mediaDevices?.getUserMedia) throw Object.assign(new Error("MEDIA_UNSUPPORTED"), { name: "NotSupportedError" });
+    const video = { facingMode: { ideal: facing.value }, width: { ideal: 1280 }, height: { ideal: 720 } };
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        video,
+        audio: { echoCancellation: true, noiseSuppression: true },
+      });
+    } catch (firstFailure) {
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({ video, audio: false });
+      } catch {
+        throw firstFailure;
+      }
+    }
     hasMedia.value = true;
+    hasAudio.value = mediaStream.getAudioTracks().length > 0;
+    muted.value = !hasAudio.value;
     await attachPreview();
     await refreshDevices();
     updateTorchSupport();
   } catch (failure) {
+    hasMedia.value = false;
+    hasAudio.value = false;
     errorMessage.value = failure?.name === "NotAllowedError"
-      ? "Necesitamos permiso para usar tu cámara y micrófono. Habilitalos en el navegador y probá otra vez."
-      : "No pudimos abrir la cámara de este dispositivo.";
+      ? "Necesitamos permiso para usar tu cámara. Habilitala en el navegador y probá otra vez."
+      : failure?.name === "NotSupportedError"
+        ? "Este navegador no permite transmitir con la cámara. Probá con Chrome, Safari o Edge actualizado."
+        : "No pudimos abrir la cámara de este dispositivo.";
   } finally {
     requestingCamera.value = false;
   }
 };
 
-const replaceCamera = async (constraints) => {
+const acquireVideoTrack = async (constraintOptions) => {
+  let lastFailure = null;
+  for (const constraints of constraintOptions) {
+    try {
+      const replacement = await navigator.mediaDevices.getUserMedia({
+        video: { ...constraints, width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false,
+      });
+      return replacement.getVideoTracks()[0];
+    } catch (failure) {
+      lastFailure = failure;
+    }
+  }
+  throw lastFailure || new Error("CAMERA_UNAVAILABLE");
+};
+
+const replaceCamera = async (constraintOptions, intendedFacing = "") => {
+  if (switchingCamera.value || !mediaStream) return;
+  switchingCamera.value = true;
   errorMessage.value = "";
+  torchOn.value = false;
+  const previous = mediaStream.getVideoTracks()[0];
+  const previousSettings = previous?.getSettings?.() || {};
+  const previousEnabled = previous?.enabled !== false;
+  const restoreOptions = [
+    ...(previousSettings.deviceId ? [{ deviceId: { exact: previousSettings.deviceId } }] : []),
+    ...(previousSettings.facingMode ? [{ facingMode: { ideal: previousSettings.facingMode } }] : []),
+    { facingMode: { ideal: facing.value } },
+  ];
+  let nextTrack = null;
   try {
-    const replacement = await navigator.mediaDevices.getUserMedia({
-      video: { ...constraints, width: { ideal: 1280 }, height: { ideal: 720 } },
-      audio: false,
-    });
-    const nextTrack = replacement.getVideoTracks()[0];
-    const previous = mediaStream.getVideoTracks()[0];
+    if (previous) {
+      mediaStream.removeTrack(previous);
+      previous.stop();
+    }
+    nextTrack = await acquireVideoTrack(constraintOptions);
+    nextTrack.enabled = previousEnabled;
     if (publisher) await publisher.replaceVideoTrack(nextTrack);
-    mediaStream.removeTrack(previous);
-    previous.stop();
     mediaStream.addTrack(nextTrack);
+    const nextFacing = nextTrack.getSettings?.().facingMode || intendedFacing;
+    if (nextFacing) facing.value = nextFacing;
     cameraPaused.value = false;
+    hasMedia.value = true;
     await attachPreview();
     await refreshDevices();
     updateTorchSupport();
   } catch {
-    errorMessage.value = "No pudimos cambiar de cámara.";
+    nextTrack?.stop();
+    try {
+      const restoredTrack = await acquireVideoTrack(restoreOptions);
+      restoredTrack.enabled = previousEnabled;
+      if (publisher) await publisher.replaceVideoTrack(restoredTrack);
+      mediaStream.addTrack(restoredTrack);
+      hasMedia.value = true;
+      await attachPreview();
+      await refreshDevices();
+      updateTorchSupport();
+    } catch {
+      hasMedia.value = false;
+    }
+    errorMessage.value = "No encontramos otra cámara disponible en este dispositivo.";
+  } finally {
+    switchingCamera.value = false;
   }
 };
 
 const switchCamera = async () => {
-  torchOn.value = false;
+  const currentSettings = mediaStream?.getVideoTracks()[0]?.getSettings?.() || {};
+  const currentFacing = currentSettings.facingMode;
+  if (currentFacing) {
+    const nextFacing = currentFacing === "environment" ? "user" : "environment";
+    await replaceCamera([
+      { facingMode: { exact: nextFacing } },
+      { facingMode: { ideal: nextFacing } },
+    ], nextFacing);
+    return;
+  }
   if (cameras.value.length > 1) {
     const index = Math.max(0, cameras.value.findIndex((camera) => camera.deviceId === selectedCamera.value));
     const next = cameras.value[(index + 1) % cameras.value.length];
-    await replaceCamera({ deviceId: { exact: next.deviceId } });
+    await replaceCamera([{ deviceId: { exact: next.deviceId } }]);
     return;
   }
-  facing.value = facing.value === "user" ? "environment" : "user";
-  await replaceCamera({ facingMode: { exact: facing.value } });
+  errorMessage.value = "Este dispositivo informa una sola cámara.";
 };
 
 const chooseCamera = async () => {
-  if (selectedCamera.value) await replaceCamera({ deviceId: { exact: selectedCamera.value } });
+  if (selectedCamera.value) await replaceCamera([{ deviceId: { exact: selectedCamera.value } }]);
 };
 
 const toggleTorch = async () => {
@@ -143,6 +222,7 @@ const toggleTorch = async () => {
 };
 
 const toggleMute = () => {
+  if (!hasAudio.value) return;
   muted.value = !muted.value;
   mediaStream?.getAudioTracks().forEach((track) => { track.enabled = !muted.value; });
 };
@@ -171,7 +251,17 @@ const beginTimers = () => {
 };
 
 const startLive = async () => {
-  if (!canStart.value) return;
+  if (connecting.value || requestingCamera.value) return;
+  if (title.value.trim().length < 3) {
+    errorMessage.value = "Escribí un título de al menos 3 caracteres para empezar el directo.";
+    await nextTick();
+    titleInput.value?.focus();
+    return;
+  }
+  if (!hasMedia.value || !mediaStream?.getVideoTracks().some((track) => track.readyState === "live")) {
+    await requestInitialCamera();
+    if (!hasMedia.value) return;
+  }
   connecting.value = true;
   errorMessage.value = "";
   let started = null;
@@ -263,6 +353,9 @@ const stopMedia = () => {
   mediaStream?.getTracks().forEach((track) => track.stop());
   mediaStream = null;
   hasMedia.value = false;
+  hasAudio.value = false;
+  torchAvailable.value = false;
+  torchOn.value = false;
 };
 
 async function finish(callApi = true) {
@@ -323,9 +416,9 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="grid grid-cols-4 border-t-2 border-charcoal sm:grid-cols-5">
-            <button type="button" class="live-control focus-ring" :class="muted && 'bg-blush'" @click="toggleMute"><PhMicrophoneSlash v-if="muted" :size="23" /><PhMicrophone v-else :size="23" /><span>{{ muted ? "Activar" : "Silenciar" }}</span></button>
+            <button type="button" class="live-control focus-ring" :class="muted && 'bg-blush'" :disabled="!hasAudio" @click="toggleMute"><PhMicrophoneSlash v-if="muted" :size="23" /><PhMicrophone v-else :size="23" /><span>{{ hasAudio ? (muted ? "Activar" : "Silenciar") : "Sin audio" }}</span></button>
             <button type="button" class="live-control focus-ring" :class="cameraPaused && 'bg-blush'" @click="toggleCamera"><PhVideoCameraSlash v-if="cameraPaused" :size="23" /><PhVideoCamera v-else :size="23" /><span>Cámara</span></button>
-            <button type="button" class="live-control focus-ring" @click="switchCamera"><PhArrowsClockwise :size="23" /><span>Cambiar</span></button>
+            <button type="button" class="live-control focus-ring" :disabled="switchingCamera || requestingCamera || !hasMedia" @click="switchCamera"><PhArrowsClockwise :size="23" /><span>{{ switchingCamera ? "Cambiando…" : "Cambiar" }}</span></button>
             <button type="button" class="live-control focus-ring" :class="torchOn && 'bg-olive'" :disabled="!torchAvailable" @click="toggleTorch"><PhFlashlight :size="23" /><span>Flash</span></button>
             <label v-if="cameras.length > 1" class="col-span-4 grid gap-1 border-t-2 border-charcoal px-4 py-3 text-xs font-bold sm:col-span-1 sm:border-l-2 sm:border-t-0">
               Cámara
@@ -336,11 +429,12 @@ onBeforeUnmount(() => {
 
         <aside class="min-w-0 p-5 sm:p-7">
           <template v-if="!isLive">
-            <label class="field-label">Título del directo<input v-model="title" maxlength="80" class="field-input" placeholder="Ej: Ñoquis en familia" /></label>
+            <label class="field-label">Título del directo<input ref="titleInput" v-model="title" maxlength="80" class="field-input" placeholder="Ej: Ñoquis en familia" /></label>
             <label class="field-label mt-5">Descripción<textarea v-model="description" maxlength="280" rows="5" class="field-input resize-none" placeholder="Contá qué vas a cocinar, para quién o qué pueden preguntarte." /></label>
             <p class="mt-3 text-sm leading-relaxed text-charcoal/60">La cámara y el micrófono solo se activan después de tu permiso. El flash aparece únicamente si la cámara lo admite.</p>
             <button v-if="!hasMedia && !requestingCamera" type="button" class="focus-ring mt-5 w-full border-2 border-charcoal bg-cream px-5 py-4 font-bold" @click="requestInitialCamera">Pedir permiso otra vez</button>
-            <button type="button" class="focus-ring mt-6 inline-flex min-h-14 w-full items-center justify-between bg-blush px-5 font-bold disabled:opacity-45" :disabled="!canStart" @click="startLive"><span>{{ connecting ? "Conectando…" : "Empezar directo" }}</span><PhVideoCamera :size="24" weight="fill" /></button>
+            <p class="mt-5 text-sm font-semibold" :class="canStart ? 'text-olive-dark' : 'text-charcoal/60'">{{ startHint }}</p>
+            <button type="button" class="focus-ring mt-3 inline-flex min-h-14 w-full items-center justify-between bg-blush px-5 font-bold disabled:opacity-45" :disabled="connecting || requestingCamera" @click="startLive"><span>{{ connecting ? "Conectando…" : "Empezar directo" }}</span><PhVideoCamera :size="24" weight="fill" /></button>
           </template>
 
           <template v-else>
