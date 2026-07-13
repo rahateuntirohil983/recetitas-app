@@ -103,8 +103,8 @@ const formatDate = (value) => new Intl.DateTimeFormat("es-AR", { day: "numeric",
           </section>
         </div>
 
-        <div class="mt-9 flex flex-wrap items-center justify-between gap-3 border-t-2 border-charcoal/15 pt-5">
-          <div class="flex items-center gap-2">
+        <div class="recipe-detail-actions mt-9 flex flex-wrap items-center justify-between gap-3 border-t-2 border-charcoal/15 pt-5">
+          <div class="recipe-detail-actions__social flex items-center gap-2">
             <button type="button" :aria-pressed="recipe.liked" class="social-action focus-ring" :class="recipe.liked && 'social-action--active'" @click="$emit('like', recipe)">
               <PhHeart :size="22" :weight="recipe.liked ? 'fill' : 'regular'" aria-hidden="true" /> {{ recipe.likeCount }}
             </button>
@@ -112,10 +112,10 @@ const formatDate = (value) => new Intl.DateTimeFormat("es-AR", { day: "numeric",
               <PhChatCircleDots :size="22" aria-hidden="true" /> {{ recipe.commentCount }} comentarios
             </button>
           </div>
-          <div class="flex items-center gap-2">
+          <div class="recipe-detail-actions__owner flex items-center gap-2">
             <button v-if="canDelete" type="button" class="social-action focus-ring hover:!bg-olive" @click="$emit('edit', recipe)"><PhPencilSimple :size="21" aria-hidden="true" /> Editar</button>
             <button v-if="canDelete" type="button" class="social-action focus-ring hover:!bg-blush" @click="$emit('delete', recipe)"><PhTrash :size="21" aria-hidden="true" /> Eliminar</button>
-            <button type="button" :aria-pressed="recipe.saved" class="social-action focus-ring" :class="recipe.saved && 'social-action--saved'" @click="$emit('save', recipe)">
+            <button type="button" :aria-pressed="recipe.saved" class="social-action detail-save-action focus-ring" :class="recipe.saved && 'social-action--saved'" @click="$emit('save', recipe)">
               <PhBookmarkSimple :size="22" :weight="recipe.saved ? 'fill' : 'regular'" aria-hidden="true" /> {{ recipe.saved ? "Guardada" : "Guardar" }}
             </button>
           </div>
