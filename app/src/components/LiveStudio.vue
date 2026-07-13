@@ -37,6 +37,7 @@ const switchingCamera = ref(false);
 const connecting = ref(false);
 const reconnecting = ref(false);
 const isLive = ref(false);
+const mobilePreviewExpanded = ref(false);
 const muted = ref(false);
 const hasAudio = ref(false);
 const cameraPaused = ref(false);
@@ -515,8 +516,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="fixed inset-0 z-[90] bg-charcoal/90 p-0 sm:overflow-y-auto sm:p-5" :class="isLive ? 'overflow-hidden' : 'overflow-y-auto'" role="dialog" aria-modal="true" aria-label="Estudio de directo">
-    <section class="mx-auto max-w-[1180px] border-charcoal bg-porcelain sm:min-h-0 sm:border-2 sm:shadow-[10px_10px_0_#e3b4b9]" :class="isLive ? 'h-[100dvh] overflow-hidden sm:h-auto sm:overflow-visible' : 'min-h-full'">
+  <div class="fixed inset-0 z-[90] bg-charcoal/90 p-0 lg:overflow-y-auto lg:p-5" :class="isLive ? 'overflow-hidden' : 'overflow-y-auto'" role="dialog" aria-modal="true" aria-label="Estudio de directo">
+    <section class="mx-auto max-w-[1180px] border-charcoal bg-porcelain sm:min-h-0 sm:border-2 sm:shadow-[10px_10px_0_#e3b4b9]" :class="isLive ? 'h-[100dvh] overflow-hidden lg:h-auto lg:overflow-visible' : 'min-h-full'">
       <header class="flex items-center justify-between border-b-2 border-charcoal px-3 py-2.5 sm:px-7 sm:py-4">
         <div>
           <p class="text-xs font-bold uppercase tracking-[0.17em] text-olive-dark">Tu cocina, ahora</p>
@@ -525,12 +526,13 @@ onBeforeUnmount(() => {
         <button type="button" class="focus-ring grid size-10 place-items-center border-2 border-charcoal hover:bg-blush sm:size-12" :aria-label="isLive ? 'Pausar y cerrar estudio' : 'Cerrar estudio'" @click="closeStudio"><PhX :size="24" /></button>
       </header>
 
-      <div class="min-w-0 lg:grid lg:grid-cols-[minmax(0,1fr)_360px]" :class="isLive ? 'flex h-[calc(100dvh-70px)] flex-col overflow-hidden sm:h-auto sm:overflow-visible' : 'grid'">
+      <div class="min-w-0 lg:grid lg:grid-cols-[minmax(0,1fr)_360px]" :class="isLive ? 'flex h-[calc(100dvh-70px)] flex-col overflow-hidden lg:h-auto lg:overflow-visible' : 'grid'">
         <div class="min-w-0 shrink-0 border-charcoal lg:border-r-2">
-          <div class="relative overflow-hidden bg-charcoal" :class="isLive ? 'h-[38dvh] max-h-[38dvh] sm:h-auto sm:max-h-[72vh] sm:aspect-video' : 'aspect-[9/16] max-h-[62vh] sm:aspect-video'">
+          <div class="relative overflow-hidden bg-charcoal" :class="isLive ? [mobilePreviewExpanded ? 'h-[34dvh] max-h-[34dvh]' : 'h-[22dvh] max-h-[22dvh]', 'lg:h-auto lg:max-h-[72vh] lg:aspect-video'] : 'aspect-[9/16] max-h-[62vh] sm:aspect-video'">
             <video ref="preview" autoplay muted playsinline class="h-full w-full object-cover" :class="facing === 'user' && 'scale-x-[-1]'" />
             <div v-if="requestingCamera" class="absolute inset-0 grid place-items-center bg-charcoal text-center text-porcelain"><div><PhCamera :size="52" class="mx-auto" /><p class="mt-3 font-semibold">Esperando permiso para la cámara…</p></div></div>
             <div v-if="isLive" class="absolute left-4 top-4 flex items-center gap-2 bg-blush px-3 py-2 text-sm font-bold text-charcoal"><span class="size-2 rounded-full bg-charcoal" /> EN DIRECTO</div>
+            <button v-if="isLive && !reconnecting" type="button" class="focus-ring absolute right-3 top-3 bg-porcelain/95 px-3 py-2 text-xs font-bold text-charcoal shadow-lg lg:hidden" @click="mobilePreviewExpanded = !mobilePreviewExpanded">{{ mobilePreviewExpanded ? "Agrandar chat" : "Ampliar cámara" }}</button>
             <div v-if="reconnecting" class="absolute inset-0 grid place-items-center bg-charcoal/80 px-6 text-center text-porcelain"><div><PhArrowsClockwise :size="46" class="mx-auto" /><p class="mt-3 font-display text-2xl font-bold">Recuperando la señal…</p><button type="button" class="focus-ring mt-4 bg-blush px-4 py-3 font-bold text-charcoal" :disabled="connecting" @click="resumeBroadcast()">Reanudar ahora</button></div></div>
             <div v-if="cameraPaused" class="absolute inset-0 grid place-items-center bg-charcoal text-porcelain"><div class="text-center"><PhVideoCameraSlash :size="58" class="mx-auto" /><p class="mt-3 font-semibold">Cámara pausada</p></div></div>
           </div>
@@ -543,7 +545,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <aside class="min-w-0 p-4 sm:p-7" :class="isLive ? 'flex min-h-0 flex-1 flex-col overflow-hidden lg:block lg:overflow-visible' : ''">
+        <aside class="min-w-0 p-3 sm:p-4 lg:p-7" :class="isLive ? 'flex min-h-0 flex-1 flex-col overflow-hidden lg:block lg:overflow-visible' : ''">
           <template v-if="!isLive">
             <label class="field-label">Título del directo<input ref="titleInput" v-model="title" maxlength="80" class="field-input" placeholder="Ej: Ñoquis en familia" /></label>
             <label class="field-label mt-5">Descripción<textarea v-model="description" maxlength="280" rows="5" class="field-input resize-none" placeholder="Contá qué vas a cocinar, para quién o qué pueden preguntarte." /></label>
@@ -554,14 +556,17 @@ onBeforeUnmount(() => {
           </template>
 
           <template v-else>
-            <h3 class="truncate font-display text-2xl font-bold sm:text-3xl">{{ live.title }}</h3>
-            <p v-if="live.description" class="mt-1 line-clamp-2 break-words text-sm leading-relaxed text-charcoal/65 sm:mt-2">{{ live.description }}</p>
-            <div class="mt-3 grid grid-cols-3 border-2 border-charcoal bg-cream text-center sm:mt-5">
-              <div class="py-2 sm:py-3"><PhEye :size="19" class="mx-auto" /><strong class="block">{{ live.viewerCount }}</strong></div>
-              <div class="border-x-2 border-charcoal py-2 sm:py-3"><PhHeart :size="19" class="mx-auto" /><strong class="block">{{ live.likeCount }}</strong></div>
-              <div class="py-2 sm:py-3"><PhChatCircleDots :size="19" class="mx-auto" /><strong class="block">{{ comments.length }}</strong></div>
+            <div class="flex min-w-0 items-center justify-between gap-3">
+              <h3 class="min-w-0 truncate font-display text-xl font-bold sm:text-2xl lg:text-3xl">{{ live.title }}</h3>
+              <span class="shrink-0 text-xs font-bold uppercase tracking-[0.12em] text-olive-dark lg:hidden">Chat en vivo</span>
             </div>
-            <div ref="chatScroll" class="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain border-y-2 border-charcoal/15 py-3 pr-1 lg:max-h-56 lg:flex-none sm:mt-5 sm:py-4" aria-live="polite" @scroll.passive="updateChatPosition">
+            <p v-if="live.description" class="mt-2 hidden line-clamp-2 break-words text-sm leading-relaxed text-charcoal/65 lg:block">{{ live.description }}</p>
+            <div class="mt-2 grid grid-cols-3 border-2 border-charcoal bg-cream text-center lg:mt-5">
+              <div class="flex items-center justify-center gap-1.5 py-1.5 lg:block lg:py-3"><PhEye :size="18" class="lg:mx-auto" /><strong class="lg:block">{{ live.viewerCount }}</strong></div>
+              <div class="flex items-center justify-center gap-1.5 border-x-2 border-charcoal py-1.5 lg:block lg:py-3"><PhHeart :size="18" class="lg:mx-auto" /><strong class="lg:block">{{ live.likeCount }}</strong></div>
+              <div class="flex items-center justify-center gap-1.5 py-1.5 lg:block lg:py-3"><PhChatCircleDots :size="18" class="lg:mx-auto" /><strong class="lg:block">{{ comments.length }}</strong></div>
+            </div>
+            <div ref="chatScroll" class="mt-2 min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain border-y-2 border-charcoal/15 py-2 pr-1 lg:mt-5 lg:max-h-56 lg:flex-none lg:py-4" aria-live="polite" @scroll.passive="updateChatPosition">
               <p v-if="!comments.length" class="text-sm text-charcoal/50">Los comentarios van a aparecer acá.</p>
               <div v-for="comment in comments" :key="comment.id" class="border-b border-charcoal/12 pb-3 text-sm">
                 <div class="flex min-w-0 items-start gap-2"><div class="min-w-0 flex-1"><strong>@{{ comment.author.handle }}</strong><span v-if="comment.author.isModerator" class="ml-1 bg-olive px-1.5 py-0.5 text-[10px] font-bold">MOD</span><img v-if="liveStickerFromBody(comment.body)" :src="liveStickerFromBody(comment.body).src" :alt="liveStickerFromBody(comment.body).label" class="mt-1 h-24 w-24 object-contain" width="96" height="96" /><span v-else class="break-words [overflow-wrap:anywhere]"> {{ comment.body }}</span></div>
@@ -574,13 +579,13 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <button v-if="hasNewComments" type="button" class="focus-ring mt-2 w-full bg-olive px-3 py-2 text-sm font-bold" @click="scrollToLatest(true)">Ver comentarios nuevos ↓</button>
-            <form class="mt-3 grid grid-cols-[auto_minmax(0,1fr)_auto] gap-2" @submit.prevent="addComment"><LiveStickerPicker @select="sendSticker" /><input v-model="commentBody" maxlength="180" class="min-w-0 border-2 border-charcoal bg-cream px-3" placeholder="Responder en vivo" /><button class="bg-charcoal px-3 py-3 font-bold text-porcelain sm:px-4">Enviar</button></form>
-            <details v-if="moderation.moderators.length || moderation.bannedUsers.length" class="mt-5 border-2 border-charcoal/20 bg-cream px-4 py-3">
+            <form class="mt-2 grid grid-cols-[auto_minmax(0,1fr)_auto] gap-2 lg:mt-4" @submit.prevent="addComment"><LiveStickerPicker @select="sendSticker" /><input v-model="commentBody" maxlength="180" class="min-w-0 border-2 border-charcoal bg-cream px-3" placeholder="Responder en vivo" /><button class="bg-charcoal px-3 py-3 font-bold text-porcelain sm:px-4">Enviar</button></form>
+            <details v-if="moderation.moderators.length || moderation.bannedUsers.length" class="mt-2 max-h-28 overflow-y-auto border-2 border-charcoal/20 bg-cream px-4 py-2 lg:mt-5 lg:max-h-none lg:overflow-visible lg:py-3">
               <summary class="cursor-pointer font-bold">Administrar chat</summary>
               <div v-if="moderation.moderators.length" class="mt-4"><p class="text-xs font-bold uppercase tracking-[0.13em] text-olive-dark">Moderadores</p><div v-for="user in moderation.moderators" :key="user.id" class="mt-2 flex items-center justify-between gap-3 text-sm"><span class="truncate">@{{ user.handle }}</span><button type="button" class="font-bold underline" @click="toggleModeratorUser(user)">Quitar</button></div></div>
               <div v-if="moderation.bannedUsers.length" class="mt-4"><p class="text-xs font-bold uppercase tracking-[0.13em] text-olive-dark">Bloqueados del chat</p><div v-for="user in moderation.bannedUsers" :key="user.id" class="mt-2 flex items-center justify-between gap-3 text-sm"><span class="truncate">@{{ user.handle }}</span><button type="button" class="font-bold underline" @click="unbanUser(user)">Desbloquear</button></div></div>
             </details>
-            <button type="button" class="focus-ring mt-3 inline-flex min-h-12 w-full items-center justify-between bg-charcoal px-5 font-bold text-porcelain sm:mt-6 sm:min-h-14" :disabled="connecting" @click="endLive"><span>Terminar directo</span><PhStop :size="23" weight="fill" /></button>
+            <button type="button" class="focus-ring mt-2 inline-flex min-h-10 w-full items-center justify-between bg-charcoal px-4 text-sm font-bold text-porcelain lg:mt-6 lg:min-h-14 lg:px-5 lg:text-base" :disabled="connecting" @click="endLive"><span>Terminar directo</span><PhStop :size="21" weight="fill" /></button>
           </template>
 
           <p v-if="errorMessage" class="mt-5 border-l-4 border-blush bg-cream px-4 py-3 text-sm font-semibold" role="alert">{{ errorMessage }}</p>
