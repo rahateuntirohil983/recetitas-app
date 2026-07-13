@@ -18,7 +18,7 @@ defineProps({
   showFollow: { type: Boolean, default: true },
   canDelete: { type: Boolean, default: false },
 });
-const emit = defineEmits(["open", "like", "save", "comments", "profile", "follow", "delete"]);
+const emit = defineEmits(["open", "tag", "like", "save", "comments", "profile", "follow", "delete"]);
 
 const openCard = (event, recipe) => {
   if (event.target !== event.currentTarget && event.target.closest("button, a, input, textarea, select")) return;
@@ -46,11 +46,12 @@ const openCard = (event, recipe) => {
     </header>
 
     <figure class="relative aspect-[16/10] overflow-hidden bg-cream">
-      <RecipeVideo v-if="recipe.videoUrl" :src="recipe.videoUrl" :title="`Video de ${recipe.title}`" compact @click.stop />
-      <img v-else-if="recipe.imageUrl" :src="recipe.imageUrl" :alt="recipe.title" class="h-full w-full object-cover transition duration-500 hover:scale-[1.02]" loading="lazy" decoding="async" />
+      <img v-if="recipe.imageUrl" :src="recipe.imageUrl" :alt="recipe.title" class="h-full w-full object-cover transition duration-500 hover:scale-[1.02]" loading="lazy" decoding="async" />
+      <RecipeVideo v-else-if="recipe.videoUrl" :src="recipe.videoUrl" :title="`Video de ${recipe.title}`" compact @click.stop />
       <div v-else class="grid h-full place-items-center bg-olive/45 text-center text-charcoal" role="img" :aria-label="`${recipe.title}, sin foto`">
         <div><PhCookingPot :size="72" weight="thin" class="mx-auto" aria-hidden="true" /><p class="mt-3 font-display text-2xl font-bold">Receta sin foto.</p></div>
       </div>
+      <span v-if="recipe.imageUrl && recipe.videoUrl" class="absolute bottom-3 right-3 bg-charcoal px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-porcelain">Incluye video</span>
     </figure>
 
     <div class="px-5 py-5 sm:px-6 sm:py-6">
@@ -71,6 +72,9 @@ const openCard = (event, recipe) => {
         {{ recipe.title }}
       </h2>
       <p class="mt-3 min-w-0 break-words [overflow-wrap:anywhere] text-base leading-relaxed text-charcoal/72">{{ recipe.summary }}</p>
+      <div v-if="recipe.tags?.length" class="mt-4 flex flex-wrap gap-2">
+        <button v-for="tag in recipe.tags" :key="tag" type="button" class="focus-ring bg-cream px-3 py-2 text-sm font-semibold text-olive-dark transition hover:bg-olive hover:text-charcoal" @click="$emit('tag', tag)">#{{ tag }}</button>
+      </div>
 
       <div class="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-charcoal/15 pt-4">
         <div class="flex items-center gap-2">

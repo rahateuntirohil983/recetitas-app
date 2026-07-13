@@ -19,7 +19,7 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
 });
 
-defineEmits(["back", "profile", "like", "save", "comments", "delete"]);
+defineEmits(["back", "profile", "tag", "like", "save", "comments", "delete"]);
 
 const canDelete = computed(() => Boolean(props.viewerId && props.recipe?.author?.id === props.viewerId));
 </script>
@@ -62,6 +62,15 @@ const canDelete = computed(() => Boolean(props.viewerId && props.recipe?.author?
 
         <h1 class="mt-5 min-w-0 break-words [overflow-wrap:anywhere] font-display text-[clamp(2.8rem,9vw,5.8rem)] font-bold leading-[0.95] tracking-[-0.055em] text-charcoal">{{ recipe.title }}</h1>
         <p class="mt-5 min-w-0 max-w-[780px] break-words [overflow-wrap:anywhere] text-lg leading-relaxed text-charcoal/72">{{ recipe.summary }}</p>
+        <div v-if="recipe.tags?.length" class="mt-5 flex flex-wrap gap-2">
+          <button v-for="tag in recipe.tags" :key="tag" type="button" class="focus-ring bg-cream px-3 py-2 text-sm font-semibold text-olive-dark transition hover:bg-olive hover:text-charcoal" @click="$emit('tag', tag)">#{{ tag }}</button>
+        </div>
+
+        <section v-if="recipe.videoUrl && recipe.imageUrl" class="mt-8 border-t-2 border-charcoal/15 pt-8">
+          <p class="text-xs font-bold uppercase tracking-[0.17em] text-olive-dark">El resultado</p>
+          <h2 class="mt-1 font-display text-3xl font-bold tracking-[-0.04em]">Así queda.</h2>
+          <img :src="recipe.imageUrl" :alt="`Resultado de ${recipe.title}`" class="mt-5 max-h-[620px] w-full border-2 border-charcoal object-cover" loading="lazy" decoding="async" />
+        </section>
 
         <div class="mt-8 grid gap-8 border-t-2 border-charcoal/15 pt-8 md:grid-cols-2 md:gap-12">
           <section>

@@ -1,5 +1,5 @@
 <script setup>
-import { nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
 import { PhArrowRight, PhImageSquare, PhRecord, PhStopCircle, PhTrash, PhUploadSimple, PhVideoCamera, PhX } from "@phosphor-icons/vue";
 
 const props = defineProps({ open: { type: Boolean, default: false }, busy: { type: Boolean, default: false } });
@@ -33,9 +33,15 @@ const form = reactive({
   cookMinutes: 35,
   servings: 4,
   imageKey: "pumpkin",
+  tags: "",
   ingredients: "",
   steps: "",
 });
+
+const parsedTags = computed(() => [...new Set(form.tags.split(/[\s,]+/)
+  .map((value) => value.trim().replace(/^#+/, ""))
+  .filter(Boolean))]
+  .slice(0, 5));
 
 const chooseImage = (event) => {
   const file = event.target.files?.[0] || null;
@@ -51,7 +57,6 @@ const chooseImage = (event) => {
     event.target.value = "";
     return;
   }
-  clearVideo();
   if (imagePreview.value) URL.revokeObjectURL(imagePreview.value);
   imageFile.value = file;
   imagePreview.value = URL.createObjectURL(file);
@@ -121,7 +126,6 @@ const setVideoFile = async (file) => {
     videoError.value = "No pudimos leer ese video.";
     return false;
   }
-  clearImage();
   clearVideo();
   videoFile.value = file;
   videoPreview.value = URL.createObjectURL(file);
@@ -215,6 +219,7 @@ watch(() => props.open, (open) => { if (!open && recording.value) cancelRecordin
 const submit = async () => {
   const ingredients = form.ingredients.split("\n").map((value) => value.trim()).filter(Boolean);
   const steps = form.steps.split("\n").map((value) => value.trim()).filter(Boolean);
+  const tags = parsedTags.value;
   const titleLength = form.title.trim().length;
   const summaryLength = form.summary.trim().length;
 
@@ -241,7 +246,7 @@ const submit = async () => {
     return;
   }
   error.value = "";
-  emit("submit", { ...form, title: form.title.trim(), summary: form.summary.trim(), ingredients, steps, imageFile: imageFile.value, videoFile: videoFile.value });
+  emit("submit", { ...form, title: form.title.trim(), summary: form.summary.trim(), ingredients, steps, tags, imageFile: imageFile.value, videoFile: videoFile.value });
 };
 </script>
 
@@ -268,16 +273,21 @@ const submit = async () => {
             <textarea ref="summaryInput" v-model="form.summary" class="field-input min-h-24 resize-y" :class="fieldErrors.summary && 'field-input--error'" :aria-invalid="Boolean(fieldErrors.summary)" maxlength="280" required placeholder="Qué la hace especial, cuándo la cocinás…" />
             <span v-if="fieldErrors.summary" class="field-error">{{ fieldErrors.summary }}</span>
           </label>
+          <label class="field-label">
+            <span class="flex items-center justify-between gap-3"><span>Hashtags</span><small class="font-medium text-charcoal/55">{{ parsedTags.length }}/5</small></span>
+            <input v-model="form.tags" class="field-input" maxlength="140" placeholder="#pastas #merienda #sinhorno" />
+            <span class="font-normal text-charcoal/55">Separalos con espacios o comas. Después se pueden tocar para descubrir recetas parecidas.</span>
+          </label>
           <div class="grid gap-5 sm:grid-cols-2">
             <label class="field-label">Minutos<input v-model.number="form.cookMinutes" type="number" min="1" max="1440" class="field-input" :class="fieldErrors.cookMinutes && 'field-input--error'" /><span v-if="fieldErrors.cookMinutes" class="field-error">{{ fieldErrors.cookMinutes }}</span></label>
             <label class="field-label">Porciones<input v-model.number="form.servings" type="number" min="1" max="24" class="field-input" :class="fieldErrors.servings && 'field-input--error'" /><span v-if="fieldErrors.servings" class="field-error">{{ fieldErrors.servings }}</span></label>
           </div>
 
           <div class="field-label">
-            Foto o video <span class="font-normal text-charcoal/55">Opcional · un video puede durar hasta 35 segundos</span>
+            Foto y/o video <span class="font-normal text-charcoal/55">Opcionales · podés agregar ambos · video de hasta 35 segundos</span>
             <div class="grid grid-cols-2 border-2 border-charcoal bg-cream p-1">
-              <button type="button" class="focus-ring inline-flex min-h-11 items-center justify-center gap-2 font-semibold" :class="mediaMode === 'image' ? 'bg-charcoal text-porcelain' : 'text-charcoal'" @click="mediaMode = 'image'; clearVideo(); cancelRecording()"><PhImageSquare :size="20" /> Foto</button>
-              <button type="button" class="focus-ring inline-flex min-h-11 items-center justify-center gap-2 font-semibold" :class="mediaMode === 'video' ? 'bg-charcoal text-porcelain' : 'text-charcoal'" @click="mediaMode = 'video'; clearImage()"><PhVideoCamera :size="20" /> Video</button>
+              <button type="button" class="focus-ring inline-flex min-h-11 items-center justify-center gap-2 font-semibold" :class="mediaMode === 'image' ? 'bg-charcoal text-porcelain' : 'text-charcoal'" @click="mediaMode = 'image'; cancelRecording()"><PhImageSquare :size="20" /> Foto <span v-if="imageFile" aria-label="Foto elegida">✓</span></button>
+              <button type="button" class="focus-ring inline-flex min-h-11 items-center justify-center gap-2 font-semibold" :class="mediaMode === 'video' ? 'bg-charcoal text-porcelain' : 'text-charcoal'" @click="mediaMode = 'video'"><PhVideoCamera :size="20" /> Video <span v-if="videoFile" aria-label="Video elegido">✓</span></button>
             </div>
 
             <template v-if="mediaMode === 'image'">

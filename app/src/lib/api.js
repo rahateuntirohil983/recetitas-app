@@ -76,6 +76,21 @@ export const api = {
     return { items: recipes };
   },
 
+  async discover(tag = "") {
+    if (!useDemo) return request(`/api/discover${tag ? `?tag=${encodeURIComponent(tag)}` : ""}`);
+    await pause();
+    const counts = new Map();
+    recipes.forEach((recipe) => (recipe.tags || []).forEach((name) => counts.set(name, (counts.get(name) || 0) + 1)));
+    const people = new Map();
+    recipes.forEach((recipe) => people.set(recipe.author.id, recipe.author));
+    return {
+      selectedTag: tag || null,
+      tags: [...counts.entries()].map(([name, recipeCount]) => ({ name, recipeCount, engagement: 0 })),
+      creators: [...people.values()].filter((person) => person.id !== demoCurrentUser.id).map((person) => ({ ...person, recipeCount: recipes.filter((recipe) => recipe.author.id === person.id).length, followerCount: 0, followed: followedUsers.has(person.id) })),
+      items: tag ? recipes.filter((recipe) => (recipe.tags || []).includes(tag)) : recipes,
+    };
+  },
+
   async saved() {
     if (!useDemo) return request("/api/saved");
     await pause();

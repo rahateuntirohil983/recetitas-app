@@ -13,6 +13,7 @@ import AppBrand from "./components/AppBrand.vue";
 import CommentsPanel from "./components/CommentsPanel.vue";
 import ComposerModal from "./components/ComposerModal.vue";
 import ConnectionsPanel from "./components/ConnectionsPanel.vue";
+import DiscoverView from "./components/DiscoverView.vue";
 import EditProfileModal from "./components/EditProfileModal.vue";
 import LoginPanel from "./components/LoginPanel.vue";
 import ProfileView from "./components/ProfileView.vue";
@@ -26,6 +27,10 @@ const session = ref({ authenticated: false, user: null, loginUrl: "/app/?login=1
 const recipes = ref([]);
 const search = ref("");
 const activeView = ref("feed");
+const lastCollectionView = ref("feed");
+const discoverTags = ref([]);
+const discoverCreators = ref([]);
+const selectedDiscoverTag = ref("");
 const loginOpen = ref(false);
 const composerOpen = ref(false);
 const composerKey = ref(0);
@@ -59,6 +64,7 @@ const filteredRecipes = computed(() => {
     recipe.author.displayName,
     recipe.author.handle,
     ...recipe.ingredients,
+    ...(recipe.tags || []),
   ].some((value) => String(value).toLowerCase().includes(term)));
 });
 
@@ -67,9 +73,35 @@ const flash = (message) => {
   window.setTimeout(() => { if (toast.value === message) toast.value = ""; }, 2800);
 };
 
+const loadDiscover = async (tag = "", updateUrl = true) => {
+  loading.value = true;
+  activeView.value = "discover";
+  lastCollectionView.value = "discover";
+  profile.value = null;
+  selectedDiscoverTag.value = String(tag || "").replace(/^#/, "");
+  if (updateUrl) {
+    const params = new URLSearchParams({ view: "discover" });
+    if (selectedDiscoverTag.value) params.set("tag", selectedDiscoverTag.value);
+    window.history.pushState({}, "", `/app/?${params}`);
+  }
+  try {
+    const response = await api.discover(selectedDiscoverTag.value);
+    recipes.value = response.items;
+    discoverTags.value = response.tags;
+    discoverCreators.value = response.creators;
+    selectedDiscoverTag.value = response.selectedTag || "";
+  } catch (failure) {
+    flash(failure.message);
+  } finally {
+    loading.value = false;
+  }
+};
+
 const loadView = async (view = activeView.value, updateUrl = true) => {
+  if (view === "discover") return loadDiscover(selectedDiscoverTag.value, updateUrl);
   loading.value = true;
   activeView.value = view;
+  lastCollectionView.value = view;
   profile.value = null;
   if (updateUrl) window.history.pushState({}, "", view === "saved" ? "/app/?view=saved" : "/app/");
   try {
@@ -124,6 +156,7 @@ const replaceRecipe = (nextRecipe) => {
 const openRecipe = async (recipeOrId, updateUrl = true) => {
   const recipeId = typeof recipeOrId === "string" ? recipeOrId : recipeOrId?.id;
   if (!recipeId) return;
+  if (["feed", "saved", "discover"].includes(activeView.value)) lastCollectionView.value = activeView.value;
   if (typeof recipeOrId === "object") selectedRecipe.value = recipeOrId;
   activeView.value = "recipe";
   profile.value = null;
@@ -186,6 +219,9 @@ const toggleFollow = async (person) => {
       : recipe;
     recipes.value = recipes.value.map(updateAuthor);
     profileRecipes.value = profileRecipes.value.map(updateAuthor);
+    discoverCreators.value = discoverCreators.value.map((creator) => creator.id === person.id
+      ? { ...creator, followed: response.active, followerCount: Math.max(0, creator.followerCount + (response.active && !wasFollowing ? 1 : !response.active && wasFollowing ? -1 : 0)) }
+      : creator);
     if (profile.value?.id === person.id) {
       profile.value = {
         ...profile.value,
@@ -341,7 +377,8 @@ onMounted(async () => {
   try {
     session.value = await api.session();
     const params = new URLSearchParams(window.location.search);
-    const requestedView = params.get("view") === "saved" ? "saved" : "feed";
+    const requestedView = ["saved", "discover"].includes(params.get("view")) ? params.get("view") : "feed";
+    selectedDiscoverTag.value = params.get("tag") || "";
     const profileRoute = window.location.pathname.match(/^\/app\/u\/([a-z0-9_]{3,24})\/?$/i);
     const recipeRoute = window.location.pathname.match(/^\/app\/r\/([^/]+)\/?$/i);
     if (recipeRoute) await openRecipe(decodeURIComponent(recipeRoute[1]), false);
@@ -355,7 +392,11 @@ onMounted(async () => {
       const recipeMatch = window.location.pathname.match(/^\/app\/r\/([^/]+)\/?$/i);
       if (recipeMatch) openRecipe(decodeURIComponent(recipeMatch[1]), false);
       else if (profileMatch) openProfile(profileMatch[1], false);
-      else loadView(new URLSearchParams(window.location.search).get("view") === "saved" ? "saved" : "feed", false);
+      else {
+        const nextParams = new URLSearchParams(window.location.search);
+        selectedDiscoverTag.value = nextParams.get("tag") || "";
+        loadView(["saved", "discover"].includes(nextParams.get("view")) ? nextParams.get("view") : "feed", false);
+      }
     });
   } catch (failure) {
     flash(failure.message);
@@ -371,7 +412,7 @@ onMounted(async () => {
 
       <nav class="mt-14 grid gap-2" aria-label="Navegación principal">
         <button type="button" class="side-nav" :class="activeView === 'feed' && 'side-nav--active'" @click="loadView('feed')"><PhHouse :size="22" /> Para vos</button>
-        <button type="button" class="side-nav" @click="search = ''; activeView = 'feed'"><PhCompass :size="22" /> Descubrir</button>
+        <button type="button" class="side-nav" :class="activeView === 'discover' && 'side-nav--active'" @click="loadDiscover()"><PhCompass :size="22" /> Descubrir</button>
         <button type="button" class="side-nav" :class="activeView === 'saved' && 'side-nav--active'" @click="loadView('saved')"><PhBookmarkSimple :size="22" /> Guardadas</button>
         <button type="button" class="side-nav" :class="activeView === 'profile' && profile?.isOwnProfile && 'side-nav--active'" @click="openOwnProfile"><PhUserCircle :size="22" /> Mi perfil</button>
       </nav>
@@ -394,7 +435,10 @@ onMounted(async () => {
 
     <header class="sticky top-0 z-20 flex h-[72px] items-center justify-between border-b-2 border-charcoal bg-charcoal px-4 text-porcelain lg:hidden">
       <AppBrand compact />
-      <button type="button" class="focus-ring grid size-11 place-items-center bg-blush text-charcoal" aria-label="Compartir una receta" @click="startPublishing"><PhPlus :size="22" weight="bold" /></button>
+      <div class="flex items-center gap-2">
+        <button type="button" class="focus-ring grid size-11 place-items-center border border-porcelain/30 text-porcelain" :class="activeView === 'discover' && 'bg-olive text-charcoal'" aria-label="Descubrir recetas" @click="loadDiscover()"><PhCompass :size="22" /></button>
+        <button type="button" class="focus-ring grid size-11 place-items-center bg-blush text-charcoal" aria-label="Compartir una receta" @click="startPublishing"><PhPlus :size="22" weight="bold" /></button>
+      </div>
     </header>
 
     <main class="lg:ml-[255px]">
@@ -434,7 +478,7 @@ onMounted(async () => {
             </button>
           </div>
           <div v-else class="grid gap-7">
-            <RecipeCard v-for="recipe in filteredRecipes" :key="recipe.id" :recipe="recipe" :viewer-id="session.user?.id || ''" @open="openRecipe" @like="actOnRecipe($event, 'like')" @save="actOnRecipe($event, 'save')" @comments="openComments" @profile="openProfile" @follow="toggleFollow" />
+            <RecipeCard v-for="recipe in filteredRecipes" :key="recipe.id" :recipe="recipe" :viewer-id="session.user?.id || ''" @open="openRecipe" @tag="loadDiscover" @like="actOnRecipe($event, 'like')" @save="actOnRecipe($event, 'save')" @comments="openComments" @profile="openProfile" @follow="toggleFollow" />
           </div>
         </section>
 
@@ -454,16 +498,29 @@ onMounted(async () => {
             </template>
           </section>
 
-          <section class="mt-7 border-2 border-charcoal bg-porcelain px-6 py-6">
-            <h2 class="font-display text-2xl font-bold">En temporada</h2>
-            <div class="mt-4 flex flex-wrap gap-2">
-              <button v-for="tag in ['calabaza', 'limón', 'pastas', 'merienda', 'sin vueltas']" :key="tag" type="button" class="border border-charcoal/25 px-3 py-2 text-sm hover:bg-olive" @click="search = tag">#{{ tag }}</button>
-            </div>
-          </section>
+          <button type="button" class="focus-ring mt-7 w-full border-2 border-charcoal bg-porcelain px-6 py-6 text-left transition hover:bg-olive" @click="loadDiscover()"><span class="text-xs font-bold uppercase tracking-[0.16em] text-olive-dark">Hashtags, personas y recetas</span><strong class="mt-2 block font-display text-2xl">Abrir Descubrir.</strong></button>
 
           <a href="/" class="mt-7 block text-sm font-semibold text-charcoal/60 underline decoration-2 underline-offset-4 hover:text-charcoal">Volver a la landing</a>
         </aside>
       </div>
+
+      <DiscoverView
+        v-else-if="activeView === 'discover'"
+        :recipes="recipes"
+        :tags="discoverTags"
+        :creators="discoverCreators"
+        :selected-tag="selectedDiscoverTag"
+        :viewer-id="session.user?.id || ''"
+        :loading="loading"
+        :busy="busy"
+        @tag="loadDiscover"
+        @profile="openProfile"
+        @follow="toggleFollow"
+        @open="openRecipe"
+        @like="actOnRecipe($event, 'like')"
+        @save="actOnRecipe($event, 'save')"
+        @comments="openComments"
+      />
 
       <ProfileView
         v-else-if="activeView === 'profile'"
@@ -477,6 +534,7 @@ onMounted(async () => {
         @follow="toggleFollow"
         @connections="openConnections"
         @open="openRecipe"
+        @tag="loadDiscover"
         @like="actOnRecipe($event, 'like')"
         @save="actOnRecipe($event, 'save')"
         @comments="openComments"
@@ -489,8 +547,9 @@ onMounted(async () => {
         :recipe="selectedRecipe"
         :viewer-id="session.user?.id || ''"
         :loading="recipeLoading"
-        @back="loadView('feed')"
+        @back="loadView(lastCollectionView)"
         @profile="openProfile"
+        @tag="loadDiscover"
         @like="actOnRecipe($event, 'like')"
         @save="actOnRecipe($event, 'save')"
         @comments="openComments"
@@ -498,9 +557,8 @@ onMounted(async () => {
       />
     </main>
 
-    <nav class="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t-2 border-charcoal bg-porcelain px-2 py-2 lg:hidden" aria-label="Navegación móvil">
+    <nav class="fixed inset-x-0 bottom-0 z-30 grid grid-cols-3 border-t-2 border-charcoal bg-porcelain px-2 py-2 lg:hidden" aria-label="Navegación móvil">
       <button type="button" class="mobile-nav" :class="activeView === 'feed' && 'mobile-nav--active'" @click="loadView('feed')"><PhHouse :size="22" /><span>Inicio</span></button>
-      <button type="button" class="mobile-nav" @click="search = ''; activeView = 'feed'"><PhCompass :size="22" /><span>Descubrir</span></button>
       <button type="button" class="mobile-nav" :class="activeView === 'saved' && 'mobile-nav--active'" @click="loadView('saved')"><PhBookmarkSimple :size="22" /><span>Guardadas</span></button>
       <button type="button" class="mobile-nav" :class="activeView === 'profile' && profile?.isOwnProfile && 'mobile-nav--active'" @click="openOwnProfile"><PhUserCircle :size="22" /><span>Perfil</span></button>
     </nav>

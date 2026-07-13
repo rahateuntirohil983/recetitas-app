@@ -4,6 +4,7 @@ export const tables = {
   likes: "likes",
   bookmarks: "bookmarks",
   comments: "comments",
+  recipeTags: "recipe_tags",
   follows: "follows",
   credentials: "credentials",
   sessions: "sessions",

@@ -122,7 +122,7 @@ test("accepts a processed recipe video from the configured media service", () =>
   assert.equal(recipe.error, undefined);
 });
 
-test("rejects recipes that attach a photo and a video together", () => {
+test("accepts a cover photo and a video on the same recipe", () => {
   const recipe = __test.validateRecipe({
     title: "Pan casero",
     summary: "Una receta para todos los domingos.",
@@ -133,7 +133,22 @@ test("rejects recipes that attach a photo and a video together", () => {
     imageUrl: "https://media-recetitas.hex-rp.com/files/user/photo.webp",
     videoUrl: "https://media-recetitas.hex-rp.com/files/user/video.mp4",
   }, "https://media-recetitas.hex-rp.com");
-  assert.match(recipe.error, /foto o un video/i);
+  assert.equal(recipe.imageUrl, "https://media-recetitas.hex-rp.com/files/user/photo.webp");
+  assert.equal(recipe.videoUrl, "https://media-recetitas.hex-rp.com/files/user/video.mp4");
+  assert.equal(recipe.error, undefined);
+});
+
+test("normalizes and deduplicates recipe hashtags", () => {
+  const recipe = __test.validateRecipe({
+    title: "Pan casero",
+    summary: "Una receta para todos los domingos.",
+    cookMinutes: 40,
+    servings: 4,
+    ingredients: ["Harina"],
+    steps: ["Amasar"],
+    tags: ["#Merienda", "merienda", "Sin horno", "Pan-Casero"],
+  });
+  assert.deepEqual(recipe.tags, ["merienda", "sin-horno", "pan-casero"]);
 });
 
 test("keeps pig avatar assignment stable and within the 64-image atlas", () => {

@@ -24,6 +24,7 @@ const SCHEMA_STATEMENTS = [
     summary TEXT NOT NULL,
     image_key TEXT NOT NULL DEFAULT 'pumpkin',
     image_url TEXT,
+    video_url TEXT,
     cook_minutes INTEGER NOT NULL,
     servings INTEGER NOT NULL,
     ingredients_json TEXT NOT NULL,
@@ -48,6 +49,12 @@ const SCHEMA_STATEMENTS = [
     author_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     body TEXT NOT NULL,
     created_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS recipe_tags (
+    recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+    tag TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (recipe_id, tag)
   )`,
   `CREATE TABLE IF NOT EXISTS follows (
     follower_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -77,12 +84,14 @@ const SCHEMA_STATEMENTS = [
   "CREATE INDEX IF NOT EXISTS recipes_created_at_idx ON recipes(created_at DESC)",
   "CREATE INDEX IF NOT EXISTS recipes_author_id_idx ON recipes(author_id)",
   "CREATE INDEX IF NOT EXISTS comments_recipe_id_idx ON comments(recipe_id, created_at)",
+  "CREATE INDEX IF NOT EXISTS recipe_tags_tag_idx ON recipe_tags(tag, created_at DESC)",
   "CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id)",
   "CREATE INDEX IF NOT EXISTS sessions_expires_at_idx ON sessions(expires_at)",
   "CREATE INDEX IF NOT EXISTS auth_attempts_key_created_idx ON auth_attempts(attempt_key, created_at)",
 ];
 
 let schemaReady;
+let recipeColumnsReady;
 let demoCleanupReady;
 
 const json = (data, status = 200, extraHeaders = {}) => new Response(JSON.stringify(data), {
@@ -111,6 +120,21 @@ const cleanLines = (values, maxItems, maxLength) => (Array.isArray(values) ? val
   .slice(0, maxItems)
   .map((value) => cleanText(value, maxLength))
   .filter(Boolean);
+
+const normalizeTag = (value) => String(value ?? "")
+  .trim()
+  .replace(/^#+/, "")
+  .normalize("NFKD")
+  .replace(/[\u0300-\u036f]/g, "")
+  .toLowerCase()
+  .replace(/[^a-z0-9_]+/g, "-")
+  .replace(/^-+|-+$/g, "")
+  .slice(0, 24);
+
+const cleanTags = (values) => [...new Set((Array.isArray(values) ? values : [])
+  .map(normalizeTag)
+  .filter((tag) => tag.length >= 2))]
+  .slice(0, 5);
 
 const parseJsonArray = (value) => {
   try {
@@ -274,19 +298,20 @@ const userDto = (row, { includeEmail = true } = {}) => ({
 const isVideoMediaUrl = (value) => /\.mp4(?:$|[?#])/i.test(String(value || ""));
 
 const recipeDto = (row) => {
-  const mediaUrl = row.image_url || null;
-  const videoMedia = isVideoMediaUrl(mediaUrl);
+  const legacyMediaUrl = row.image_url || null;
+  const legacyVideo = isVideoMediaUrl(legacyMediaUrl);
   return {
     id: row.id,
     title: row.title,
     summary: row.summary,
     imageKey: row.image_key,
-    imageUrl: videoMedia ? null : mediaUrl,
-    videoUrl: videoMedia ? mediaUrl : null,
+    imageUrl: legacyVideo ? null : legacyMediaUrl,
+    videoUrl: row.video_url || (legacyVideo ? legacyMediaUrl : null),
     cookMinutes: Number(row.cook_minutes),
     servings: Number(row.servings),
     ingredients: parseJsonArray(row.ingredients_json),
     steps: parseJsonArray(row.steps_json),
+    tags: parseJsonArray(row.tags_json),
     createdAt: row.created_at,
     likeCount: Number(row.like_count || 0),
     commentCount: Number(row.comment_count || 0),
@@ -314,9 +339,25 @@ const ensureSchema = async (db) => {
   await schemaReady;
 };
 
+const ensureRecipeColumns = async (db) => {
+  if (!recipeColumnsReady) {
+    recipeColumnsReady = (async () => {
+      const columns = await db.prepare("PRAGMA table_info(recipes)").all();
+      if (!(columns.results || []).some((column) => column.name === "video_url")) {
+        await db.prepare("ALTER TABLE recipes ADD COLUMN video_url TEXT").run();
+      }
+    })().catch((cause) => {
+      recipeColumnsReady = null;
+      throw cause;
+    });
+  }
+  await recipeColumnsReady;
+};
+
 const cleanupDemoData = async (db) => {
   if (!demoCleanupReady) {
     const statements = [
+      db.prepare("DELETE FROM recipe_tags WHERE recipe_id LIKE 'recipe_demo_%'"),
       db.prepare("DELETE FROM comments WHERE recipe_id LIKE 'recipe_demo_%' OR author_id LIKE 'user_demo_%'"),
       db.prepare("DELETE FROM likes WHERE recipe_id LIKE 'recipe_demo_%' OR user_id LIKE 'user_demo_%'"),
       db.prepare("DELETE FROM bookmarks WHERE recipe_id LIKE 'recipe_demo_%' OR user_id LIKE 'user_demo_%'"),
@@ -396,17 +437,26 @@ const requireUser = async (request, db) => {
   return { user };
 };
 
-const getFeed = async (db, viewerId = "", limit = 20, authorId = null) => {
+const getFeed = async (db, viewerId = "", limit = 20, authorId = null, tag = null) => {
   const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 40);
-  const where = authorId ? "WHERE r.author_id = ?" : "";
-  const bindings = authorId
-    ? [viewerId, viewerId, viewerId, authorId, safeLimit]
-    : [viewerId, viewerId, viewerId, safeLimit];
+  const conditions = [];
+  const filters = [];
+  if (authorId) {
+    conditions.push("r.author_id = ?");
+    filters.push(authorId);
+  }
+  if (tag) {
+    conditions.push("EXISTS(SELECT 1 FROM recipe_tags ft WHERE ft.recipe_id = r.id AND ft.tag = ?)");
+    filters.push(tag);
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const bindings = [viewerId, viewerId, viewerId, ...filters, safeLimit];
   const result = await db.prepare(`SELECT
       r.*,
       u.handle,
       u.display_name,
       u.avatar_url,
+      COALESCE((SELECT json_group_array(rt.tag) FROM recipe_tags rt WHERE rt.recipe_id = r.id), '[]') AS tags_json,
       (SELECT COUNT(*) FROM likes l WHERE l.recipe_id = r.id) AS like_count,
       (SELECT COUNT(*) FROM comments c WHERE c.recipe_id = r.id) AS comment_count,
       EXISTS(SELECT 1 FROM likes ml WHERE ml.recipe_id = r.id AND ml.user_id = ?) AS liked_by_me,
@@ -429,6 +479,7 @@ const getRecipe = async (db, recipeId, viewerId = "") => {
       u.handle,
       u.display_name,
       u.avatar_url,
+      COALESCE((SELECT json_group_array(rt.tag) FROM recipe_tags rt WHERE rt.recipe_id = r.id), '[]') AS tags_json,
       (SELECT COUNT(*) FROM likes l WHERE l.recipe_id = r.id) AS like_count,
       (SELECT COUNT(*) FROM comments c WHERE c.recipe_id = r.id) AS comment_count,
       EXISTS(SELECT 1 FROM likes ml WHERE ml.recipe_id = r.id AND ml.user_id = ?) AS liked_by_me,
@@ -467,6 +518,7 @@ const validateRecipe = (body, mediaBaseUrl = "") => {
   const summary = cleanText(body.summary, 280);
   const ingredients = cleanLines(body.ingredients, 40, 120);
   const steps = cleanLines(body.steps, 30, 500);
+  const tags = cleanTags(body.tags);
   const cookMinutes = Number(body.cookMinutes);
   const servings = Number(body.servings);
   const imageKey = IMAGE_KEYS.has(body.imageKey) ? body.imageKey : "pumpkin";
@@ -491,7 +543,6 @@ const validateRecipe = (body, mediaBaseUrl = "") => {
   if (steps.length === 0) return { error: "Agregá al menos un paso." };
   if (rawImageUrl && !imageUrl) return { error: "La imagen de la receta no es válida." };
   if (rawVideoUrl && !videoUrl) return { error: "El video de la receta no es válido." };
-  if (imageUrl && videoUrl) return { error: "Elegí una foto o un video, no ambos." };
   if (!Number.isInteger(cookMinutes) || cookMinutes < 1 || cookMinutes > 1440) {
     return { error: "El tiempo de cocción no es válido." };
   }
@@ -499,7 +550,7 @@ const validateRecipe = (body, mediaBaseUrl = "") => {
     return { error: "La cantidad de porciones no es válida." };
   }
 
-  return { title, summary, ingredients, steps, cookMinutes, servings, imageKey, imageUrl, videoUrl };
+  return { title, summary, ingredients, steps, tags, cookMinutes, servings, imageKey, imageUrl, videoUrl };
 };
 
 export async function handleApiRequest(request, env) {
@@ -517,6 +568,7 @@ export async function handleApiRequest(request, env) {
 
   try {
     await ensureSchema(env.DB);
+    await ensureRecipeColumns(env.DB);
     await cleanupDemoData(env.DB);
 
     const url = new URL(request.url);
@@ -657,11 +709,59 @@ export async function handleApiRequest(request, env) {
       return json({ items: await getFeed(env.DB, viewer?.id || "", url.searchParams.get("limit")) });
     }
 
+    if (request.method === "GET" && path === "/api/discover") {
+      const selectedTag = normalizeTag(url.searchParams.get("tag"));
+      const [tagResult, creatorResult, items] = await Promise.all([
+        env.DB.prepare(`SELECT
+            rt.tag,
+            COUNT(DISTINCT rt.recipe_id) AS recipe_count,
+            COALESCE(SUM(
+              (SELECT COUNT(*) FROM likes l WHERE l.recipe_id = rt.recipe_id) +
+              (SELECT COUNT(*) FROM comments c WHERE c.recipe_id = rt.recipe_id)
+            ), 0) AS engagement
+          FROM recipe_tags rt
+          GROUP BY rt.tag
+          ORDER BY recipe_count DESC, engagement DESC, rt.tag ASC
+          LIMIT 16`).all(),
+        env.DB.prepare(`SELECT
+            u.*,
+            COUNT(DISTINCT r.id) AS recipe_count,
+            (SELECT COUNT(*) FROM follows f WHERE f.followed_id = u.id) AS follower_count,
+            EXISTS(SELECT 1 FROM follows mf WHERE mf.follower_id = ? AND mf.followed_id = u.id) AS followed_by_me
+          FROM users u
+          JOIN recipes r ON r.author_id = u.id
+          WHERE (? = '' OR u.id <> ?)
+          GROUP BY u.id
+          ORDER BY recipe_count DESC, follower_count DESC, u.created_at DESC
+          LIMIT 8`)
+          .bind(viewer?.id || "", viewer?.id || "", viewer?.id || "")
+          .all(),
+        getFeed(env.DB, viewer?.id || "", 30, null, selectedTag || null),
+      ]);
+
+      return json({
+        selectedTag: selectedTag || null,
+        tags: (tagResult.results || []).map((row) => ({
+          name: row.tag,
+          recipeCount: Number(row.recipe_count || 0),
+          engagement: Number(row.engagement || 0),
+        })),
+        creators: (creatorResult.results || []).map((row) => ({
+          ...userDto(row, { includeEmail: false }),
+          recipeCount: Number(row.recipe_count || 0),
+          followerCount: Number(row.follower_count || 0),
+          followed: Boolean(row.followed_by_me),
+        })),
+        items,
+      });
+    }
+
     if (request.method === "GET" && path === "/api/saved") {
       const auth = await requireUser(request, env.DB);
       if (auth.response) return auth.response;
       const result = await env.DB.prepare(`SELECT
           r.*, u.handle, u.display_name, u.avatar_url,
+          COALESCE((SELECT json_group_array(rt.tag) FROM recipe_tags rt WHERE rt.recipe_id = r.id), '[]') AS tags_json,
           (SELECT COUNT(*) FROM likes l WHERE l.recipe_id = r.id) AS like_count,
           (SELECT COUNT(*) FROM comments c WHERE c.recipe_id = r.id) AS comment_count,
           EXISTS(SELECT 1 FROM likes ml WHERE ml.recipe_id = r.id AND ml.user_id = ?) AS liked_by_me,
@@ -716,24 +816,28 @@ export async function handleApiRequest(request, env) {
       if (recipe.error) return error(422, "INVALID_RECIPE", recipe.error);
 
       const recipeId = createId("rcp");
-      await env.DB.prepare(`INSERT INTO recipes (
-          id, author_id, title, summary, image_key, image_url, cook_minutes,
+      const createdAt = now();
+      const recipeInsert = env.DB.prepare(`INSERT INTO recipes (
+          id, author_id, title, summary, image_key, image_url, video_url, cook_minutes,
           servings, ingredients_json, steps_json, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .bind(
           recipeId,
           auth.user.id,
           recipe.title,
           recipe.summary,
           recipe.imageKey,
-          recipe.videoUrl || recipe.imageUrl,
+          recipe.imageUrl,
+          recipe.videoUrl,
           recipe.cookMinutes,
           recipe.servings,
           JSON.stringify(recipe.ingredients),
           JSON.stringify(recipe.steps),
-          now(),
-        )
-        .run();
+          createdAt,
+        );
+      const tagInserts = recipe.tags.map((tag) => env.DB.prepare("INSERT INTO recipe_tags (recipe_id, tag, created_at) VALUES (?, ?, ?)")
+        .bind(recipeId, tag, createdAt));
+      await env.DB.batch([recipeInsert, ...tagInserts]);
 
       return json({ recipe: await getRecipe(env.DB, recipeId, auth.user.id) }, 201);
     }
@@ -811,17 +915,19 @@ export async function handleApiRequest(request, env) {
         const auth = await requireUser(request, env.DB);
         if (auth.response) return auth.response;
         if (recipe.author.id !== auth.user.id) return error(403, "NOT_OWNER", "Solo podés borrar tus recetas.");
-        const mediaUrl = recipe.videoUrl || recipe.imageUrl;
-        if (mediaUrl && env.MEDIA_UPLOAD_URL && env.MEDIA_UPLOAD_TOKEN) {
-          const deleted = await fetch(new URL("/delete", env.MEDIA_UPLOAD_URL), {
-            method: "DELETE",
-            headers: {
-              authorization: `Bearer ${env.MEDIA_UPLOAD_TOKEN}`,
-              "x-user-id": auth.user.id,
-              "x-file-url": mediaUrl,
-            },
-          });
-          if (!deleted.ok) return error(502, "MEDIA_DELETE_FAILED", "No pudimos eliminar el archivo. Probá nuevamente.");
+        const mediaUrls = [recipe.imageUrl, recipe.videoUrl].filter(Boolean);
+        if (mediaUrls.length && env.MEDIA_UPLOAD_URL && env.MEDIA_UPLOAD_TOKEN) {
+          for (const mediaUrl of mediaUrls) {
+            const deleted = await fetch(new URL("/delete", env.MEDIA_UPLOAD_URL), {
+              method: "DELETE",
+              headers: {
+                authorization: `Bearer ${env.MEDIA_UPLOAD_TOKEN}`,
+                "x-user-id": auth.user.id,
+                "x-file-url": mediaUrl,
+              },
+            });
+            if (!deleted.ok) return error(502, "MEDIA_DELETE_FAILED", "No pudimos eliminar uno de los archivos. Probá nuevamente.");
+          }
         }
         await env.DB.prepare("DELETE FROM recipes WHERE id = ?").bind(recipeId).run();
         return new Response(null, { status: 204 });
