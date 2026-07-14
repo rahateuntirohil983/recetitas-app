@@ -1,5 +1,5 @@
 <script setup>
-import { PhArrowLeft, PhPencilSimple, PhUserPlus, PhVideoCamera } from "@phosphor-icons/vue";
+import { PhArrowLeft, PhPencilSimple, PhShieldCheck, PhUserPlus, PhVideoCamera } from "@phosphor-icons/vue";
 import PigAvatar from "./PigAvatar.vue";
 import ProfileLive from "./ProfileLive.vue";
 import RecipeCard from "./RecipeCard.vue";
@@ -53,7 +53,10 @@ defineEmits(["back", "edit", "edit-recipe", "follow", "connections", "open", "ta
             <div class="min-w-0">
               <p class="text-xs font-bold uppercase tracking-[0.18em] text-olive-dark">Recetario personal</p>
               <h1 class="mt-1 break-words font-display text-[clamp(2.7rem,8vw,4.5rem)] font-bold leading-[0.94] tracking-[-0.055em] text-charcoal">{{ profile.displayName }}</h1>
-              <p class="mt-2 font-semibold text-charcoal/55">@{{ profile.handle }}</p>
+              <div class="mt-2 flex flex-wrap items-center gap-2">
+                <p class="font-semibold text-charcoal/55">@{{ profile.handle }}</p>
+                <span v-if="profile.isTeam" class="inline-flex items-center gap-1.5 border-2 border-charcoal bg-olive px-2.5 py-1 text-xs font-bold text-charcoal"><PhShieldCheck :size="16" weight="fill" /> Equipo de recetitas</span>
+              </div>
               <p class="mt-5 max-w-[620px] border-l-4 border-blush pl-4 text-base leading-relaxed text-charcoal/75">{{ profile.bio || "Todavía no escribió su historia de cocina." }}</p>
             </div>
 

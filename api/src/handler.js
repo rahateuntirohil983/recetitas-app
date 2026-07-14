@@ -10,6 +10,9 @@ const LIVE_ACTIVE_WINDOW_MS = 45_000;
 const LIVE_VIEWER_WINDOW_MS = 25_000;
 const LIVE_RESUME_WINDOW_MS = 10 * 60_000;
 const LIVE_STICKER_IDS = new Set(["hello", "heart", "delicious", "laugh", "applause", "surprised"]);
+const TEAM_HANDLES = new Set(["waddles", "balng"]);
+const ADMIN_SESSION_HOURS = 12;
+const SUPPORT_SESSION_DAYS = 30;
 
 const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS users (
@@ -19,6 +22,10 @@ const SCHEMA_STATEMENTS = [
     display_name TEXT NOT NULL,
     bio TEXT NOT NULL DEFAULT '',
     avatar_url TEXT,
+    is_banned INTEGER NOT NULL DEFAULT 0,
+    banned_at TEXT,
+    banned_reason TEXT NOT NULL DEFAULT '',
+    banned_by TEXT,
     created_at TEXT NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS recipes (
@@ -152,6 +159,53 @@ const SCHEMA_STATEMENTS = [
     attempt_key TEXT NOT NULL,
     created_at TEXT NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS admin_sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS support_sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS account_access_logs (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    ip_address TEXT NOT NULL,
+    user_agent TEXT NOT NULL DEFAULT '',
+    action TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS admin_audit_logs (
+    id TEXT PRIMARY KEY,
+    admin_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    target_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    action TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS support_tickets (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    category TEXT NOT NULL CHECK (category IN ('appeal', 'bug', 'account', 'other')),
+    subject TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'in_progress', 'waiting_user', 'resolved', 'closed')),
+    priority TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('low', 'normal', 'high', 'urgent')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    closed_at TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS support_messages (
+    id TEXT PRIMARY KEY,
+    ticket_id TEXT NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
+    author_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    author_role TEXT NOT NULL CHECK (author_role IN ('user', 'team')),
+    body TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
   "CREATE INDEX IF NOT EXISTS recipes_created_at_idx ON recipes(created_at DESC)",
   "CREATE INDEX IF NOT EXISTS recipes_author_id_idx ON recipes(author_id)",
   "CREATE INDEX IF NOT EXISTS comments_recipe_id_idx ON comments(recipe_id, created_at)",
@@ -166,6 +220,14 @@ const SCHEMA_STATEMENTS = [
   "CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id)",
   "CREATE INDEX IF NOT EXISTS sessions_expires_at_idx ON sessions(expires_at)",
   "CREATE INDEX IF NOT EXISTS auth_attempts_key_created_idx ON auth_attempts(attempt_key, created_at)",
+  "CREATE INDEX IF NOT EXISTS admin_sessions_expires_idx ON admin_sessions(expires_at)",
+  "CREATE INDEX IF NOT EXISTS support_sessions_expires_idx ON support_sessions(expires_at)",
+  "CREATE INDEX IF NOT EXISTS account_access_user_idx ON account_access_logs(user_id, created_at DESC)",
+  "CREATE INDEX IF NOT EXISTS account_access_created_idx ON account_access_logs(created_at DESC)",
+  "CREATE INDEX IF NOT EXISTS admin_audit_created_idx ON admin_audit_logs(created_at DESC)",
+  "CREATE INDEX IF NOT EXISTS support_tickets_status_idx ON support_tickets(status, updated_at DESC)",
+  "CREATE INDEX IF NOT EXISTS support_tickets_user_idx ON support_tickets(user_id, updated_at DESC)",
+  "CREATE INDEX IF NOT EXISTS support_messages_ticket_idx ON support_messages(ticket_id, created_at ASC)",
 ];
 
 let schemaReady;
@@ -364,6 +426,7 @@ const avatarIndexForRow = (row) => {
 };
 
 const publicAvatarUrl = (value) => /^https:\/\//i.test(String(value || "")) ? value : null;
+const isTeamMember = (row) => TEAM_HANDLES.has(String(row?.handle || "").toLowerCase());
 
 const userDto = (row, { includeEmail = true } = {}) => ({
   id: row.id,
@@ -373,6 +436,8 @@ const userDto = (row, { includeEmail = true } = {}) => ({
   bio: row.bio || "",
   avatarUrl: publicAvatarUrl(row.avatar_url),
   avatarIndex: avatarIndexForRow(row),
+  isTeam: isTeamMember(row),
+  teamLabel: isTeamMember(row) ? "Equipo de recetitas" : null,
 });
 
 const isVideoMediaUrl = (value) => /\.mp4(?:$|[?#])/i.test(String(value || ""));
@@ -407,6 +472,8 @@ const recipeDto = (row) => {
       avatarUrl: publicAvatarUrl(row.avatar_url),
       avatarIndex: avatarIndexForRow({ id: row.author_id, avatar_url: row.avatar_url }),
       followed: Boolean(row.author_followed),
+      isTeam: TEAM_HANDLES.has(String(row.handle || "").toLowerCase()),
+      teamLabel: TEAM_HANDLES.has(String(row.handle || "").toLowerCase()) ? "Equipo de recetitas" : null,
     },
   };
 };
@@ -494,6 +561,155 @@ const createSession = async (db, userId) => {
   return token;
 };
 
+const bearerToken = (request) => {
+  const match = String(request.headers.get("authorization") || "").match(/^Bearer\s+([a-f0-9]{64})$/i);
+  return match?.[1] || "";
+};
+
+const createPortalSession = async (db, userId, type) => {
+  const table = type === "admin" ? "admin_sessions" : "support_sessions";
+  const token = randomHex(32);
+  const tokenHash = await sha256(token);
+  const createdAt = now();
+  const duration = type === "admin"
+    ? ADMIN_SESSION_HOURS * 60 * 60 * 1000
+    : SUPPORT_SESSION_DAYS * 24 * 60 * 60 * 1000;
+  const expiresAt = new Date(Date.now() + duration).toISOString();
+  await db.prepare(`INSERT INTO ${table} (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)`)
+    .bind(tokenHash, userId, createdAt, expiresAt)
+    .run();
+  return { token, expiresAt };
+};
+
+const getPortalUser = async (request, db, type) => {
+  const token = bearerToken(request);
+  if (!token) return null;
+  const table = type === "admin" ? "admin_sessions" : "support_sessions";
+  const user = await db.prepare(`SELECT u.* FROM ${table} ps
+    JOIN users u ON u.id = ps.user_id
+    WHERE ps.token_hash = ? AND ps.expires_at > ?`)
+    .bind(await sha256(token), now())
+    .first();
+  if (!user) return null;
+  if (type === "admin" && (!isTeamMember(user) || Boolean(user.is_banned))) return null;
+  return user;
+};
+
+const requirePortalUser = async (request, db, type) => {
+  const user = await getPortalUser(request, db, type);
+  if (!user) {
+    return { response: error(401, "PORTAL_AUTH_REQUIRED", type === "admin" ? "Iniciá sesión con una cuenta del equipo." : "Iniciá sesión para acceder a soporte.") };
+  }
+  return { user };
+};
+
+const removePortalSession = async (request, db, type) => {
+  const token = bearerToken(request);
+  if (!token) return;
+  const table = type === "admin" ? "admin_sessions" : "support_sessions";
+  await db.prepare(`DELETE FROM ${table} WHERE token_hash = ?`).bind(await sha256(token)).run();
+};
+
+const clientMetadata = (request, env) => {
+  const suppliedSecret = String(request.headers.get("x-recetitas-proxy-token") || "");
+  const trustedProxy = Boolean(env.PORTAL_PROXY_TOKEN)
+    && constantTimeEqual(suppliedSecret, String(env.PORTAL_PROXY_TOKEN));
+  const forwardedIp = cleanText(request.headers.get("x-recetitas-client-ip"), 64);
+  const directIp = cleanText(request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for")?.split(",")[0], 64);
+  const forwardedAgent = cleanText(request.headers.get("x-recetitas-client-user-agent"), 300);
+  return {
+    ipAddress: trustedProxy && forwardedIp ? forwardedIp : (directIp || "unknown"),
+    userAgent: trustedProxy && forwardedAgent ? forwardedAgent : cleanText(request.headers.get("user-agent"), 300),
+  };
+};
+
+const recordAccess = async (db, userId, action, metadata) => {
+  const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+  await db.batch([
+    db.prepare("DELETE FROM account_access_logs WHERE created_at < ?").bind(cutoff),
+    db.prepare("INSERT INTO account_access_logs (id, user_id, ip_address, user_agent, action, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(createId("acl"), userId, metadata.ipAddress, metadata.userAgent, action, now()),
+  ]);
+};
+
+const auditAdmin = async (db, adminId, action, { targetUserId = null, detail = "" } = {}) => {
+  await db.prepare("INSERT INTO admin_audit_logs (id, admin_id, target_user_id, action, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+    .bind(createId("aud"), adminId, targetUserId, action, cleanText(detail, 500), now())
+    .run();
+};
+
+const adminUserDto = (row) => ({
+  ...userDto(row),
+  isBanned: Boolean(row.is_banned),
+  bannedAt: row.banned_at || null,
+  bannedReason: row.banned_reason || "",
+  createdAt: row.created_at,
+  recipeCount: Number(row.recipe_count || 0),
+  commentCount: Number(row.comment_count || 0),
+  followerCount: Number(row.follower_count || 0),
+  ticketCount: Number(row.ticket_count || 0),
+  lastAccessAt: row.last_access_at || null,
+  lastIpAddress: row.last_ip_address || null,
+  lastUserAgent: row.last_user_agent || null,
+});
+
+const ticketDto = (row) => ({
+  id: row.id,
+  category: row.category,
+  subject: row.subject,
+  status: row.status,
+  priority: row.priority,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+  closedAt: row.closed_at || null,
+  messageCount: Number(row.message_count || 0),
+  user: row.user_id ? {
+    id: row.user_id,
+    handle: row.handle,
+    displayName: row.display_name,
+    email: row.email,
+    avatarUrl: publicAvatarUrl(row.avatar_url),
+    avatarIndex: avatarIndexForRow({ id: row.user_id, avatar_url: row.avatar_url }),
+    isBanned: Boolean(row.is_banned),
+  } : null,
+});
+
+const getTicketMessages = async (db, ticketId) => {
+  const result = await db.prepare(`SELECT sm.*, u.handle, u.display_name, u.avatar_url
+    FROM support_messages sm
+    JOIN users u ON u.id = sm.author_id
+    WHERE sm.ticket_id = ?
+    ORDER BY sm.created_at ASC
+    LIMIT 250`)
+    .bind(ticketId)
+    .all();
+  return (result.results || []).map((row) => ({
+    id: row.id,
+    body: row.body,
+    role: row.author_role,
+    createdAt: row.created_at,
+    author: {
+      id: row.author_id,
+      handle: row.handle,
+      displayName: row.display_name,
+      avatarUrl: publicAvatarUrl(row.avatar_url),
+      avatarIndex: avatarIndexForRow({ id: row.author_id, avatar_url: row.avatar_url }),
+      isTeam: row.author_role === "team",
+    },
+  }));
+};
+
+const getTicket = async (db, ticketId, userId = "") => {
+  const row = await db.prepare(`SELECT st.*, u.handle, u.display_name, u.email, u.avatar_url, u.is_banned,
+      (SELECT COUNT(*) FROM support_messages sm WHERE sm.ticket_id = st.id) AS message_count
+    FROM support_tickets st
+    JOIN users u ON u.id = st.user_id
+    WHERE st.id = ? AND (? = '' OR st.user_id = ?)`)
+    .bind(ticketId, userId, userId)
+    .first();
+  return row ? ticketDto(row) : null;
+};
+
 const getSessionUser = (request, db) => {
   const cached = sessionUserCache.get(request);
   if (cached) return cached;
@@ -505,7 +721,7 @@ const getSessionUser = (request, db) => {
     return db.prepare(`SELECT u.*
       FROM sessions s
       JOIN users u ON u.id = s.user_id
-      WHERE s.token_hash = ? AND s.expires_at > ?`)
+      WHERE s.token_hash = ? AND s.expires_at > ? AND COALESCE(u.is_banned, 0) = 0`)
       .bind(tokenHash, now())
       .first();
   })();
@@ -871,6 +1087,364 @@ export async function handleApiRequest(request, env) {
       return json({ ok: true, service: "recetitas-api", database: "ready" });
     }
 
+    if (request.method === "POST" && path === "/api/admin/login") {
+      const login = validateLogin(await readBody(request));
+      if (login.error) return error(422, "INVALID_LOGIN", login.error);
+      const attemptKey = await authAttemptKey(request, `admin:${login.identifier}`);
+      if (await isLoginRateLimited(env.DB, attemptKey)) {
+        return error(429, "TOO_MANY_ATTEMPTS", "Demasiados intentos. Esperá 15 minutos y probá de nuevo.");
+      }
+      const credential = await env.DB.prepare(`SELECT u.*, c.password_hash, c.password_salt, c.password_iterations
+        FROM users u JOIN credentials c ON c.user_id = u.id
+        WHERE u.email = ? OR u.handle = ? LIMIT 1`)
+        .bind(login.identifier, login.identifier)
+        .first();
+      const validPassword = credential
+        ? await verifyPassword(login.password, credential)
+        : (await derivePassword(login.password, hexToBytes("00112233445566778899aabbccddeeff")), false);
+      if (!credential || !validPassword) {
+        await recordFailedLogin(env.DB, attemptKey);
+        return error(401, "INVALID_CREDENTIALS", "El usuario o la contraseña no coinciden.");
+      }
+      if (!isTeamMember(credential)) return error(403, "ADMIN_FORBIDDEN", "Esta cuenta no pertenece al equipo de recetitas.");
+      if (credential.is_banned) return error(403, "ACCOUNT_BANNED", "Esta cuenta del equipo está bloqueada.");
+      await env.DB.batch([
+        env.DB.prepare("DELETE FROM auth_attempts WHERE attempt_key = ?").bind(attemptKey),
+        env.DB.prepare("DELETE FROM admin_sessions WHERE expires_at <= ?").bind(now()),
+      ]);
+      const [session] = await Promise.all([
+        createPortalSession(env.DB, credential.id, "admin"),
+        recordAccess(env.DB, credential.id, "admin_login", clientMetadata(request, env)),
+      ]);
+      return json({ authenticated: true, token: session.token, expiresAt: session.expiresAt, user: adminUserDto(credential) });
+    }
+
+    if (request.method === "POST" && path === "/api/admin/logout") {
+      await removePortalSession(request, env.DB, "admin");
+      return json({ authenticated: false, user: null });
+    }
+
+    if (request.method === "GET" && path === "/api/admin/session") {
+      const auth = await requirePortalUser(request, env.DB, "admin");
+      if (auth.response) return auth.response;
+      return json({ authenticated: true, user: adminUserDto(auth.user) });
+    }
+
+    if (request.method === "GET" && path === "/api/admin/overview") {
+      const auth = await requirePortalUser(request, env.DB, "admin");
+      if (auth.response) return auth.response;
+      const accessCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const [usersCount, bannedCount, recipesCount, commentsCount, liveCount, accessCount, ticketsCount, livesResult, ticketsResult] = await Promise.all([
+        env.DB.prepare("SELECT COUNT(*) AS count FROM users").first(),
+        env.DB.prepare("SELECT COUNT(*) AS count FROM users WHERE is_banned = 1").first(),
+        env.DB.prepare("SELECT COUNT(*) AS count FROM recipes").first(),
+        env.DB.prepare("SELECT COUNT(*) AS count FROM comments").first(),
+        env.DB.prepare("SELECT COUNT(*) AS count FROM live_streams WHERE status = 'live'").first(),
+        env.DB.prepare("SELECT COUNT(*) AS count FROM account_access_logs WHERE created_at > ?").bind(accessCutoff).first(),
+        env.DB.prepare("SELECT COUNT(*) AS count FROM support_tickets WHERE status NOT IN ('resolved', 'closed')").first(),
+        env.DB.prepare(`SELECT ls.id, ls.title, ls.description, ls.status, ls.started_at, ls.last_seen_at,
+            u.id AS user_id, u.handle, u.display_name,
+            (SELECT COUNT(*) FROM live_viewers lv WHERE lv.live_id = ls.id AND lv.last_seen_at > ?) AS viewer_count
+          FROM live_streams ls JOIN users u ON u.id = ls.user_id
+          WHERE ls.status = 'live' ORDER BY ls.started_at DESC LIMIT 12`)
+          .bind(liveViewerCutoff()).all(),
+        env.DB.prepare(`SELECT st.*, u.handle, u.display_name, u.email, u.avatar_url, u.is_banned,
+            (SELECT COUNT(*) FROM support_messages sm WHERE sm.ticket_id = st.id) AS message_count
+          FROM support_tickets st JOIN users u ON u.id = st.user_id
+          ORDER BY CASE st.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,
+            st.updated_at DESC LIMIT 8`).all(),
+      ]);
+      return json({
+        stats: {
+          users: Number(usersCount?.count || 0),
+          banned: Number(bannedCount?.count || 0),
+          recipes: Number(recipesCount?.count || 0),
+          comments: Number(commentsCount?.count || 0),
+          live: Number(liveCount?.count || 0),
+          accessLast24h: Number(accessCount?.count || 0),
+          pendingTickets: Number(ticketsCount?.count || 0),
+        },
+        lives: (livesResult.results || []).map((row) => ({
+          id: row.id,
+          title: row.title,
+          description: row.description || "",
+          status: row.status,
+          startedAt: row.started_at,
+          lastSeenAt: row.last_seen_at,
+          viewerCount: Number(row.viewer_count || 0),
+          author: { id: row.user_id, handle: row.handle, displayName: row.display_name },
+        })),
+        tickets: (ticketsResult.results || []).map(ticketDto),
+      });
+    }
+
+    if (request.method === "GET" && path === "/api/admin/users") {
+      const auth = await requirePortalUser(request, env.DB, "admin");
+      if (auth.response) return auth.response;
+      const search = cleanText(url.searchParams.get("search"), 80);
+      const pattern = `%${search}%`;
+      const result = await env.DB.prepare(`SELECT u.*,
+          (SELECT COUNT(*) FROM recipes r WHERE r.author_id = u.id) AS recipe_count,
+          (SELECT COUNT(*) FROM comments c WHERE c.author_id = u.id) AS comment_count,
+          (SELECT COUNT(*) FROM follows f WHERE f.followed_id = u.id) AS follower_count,
+          (SELECT COUNT(*) FROM support_tickets st WHERE st.user_id = u.id) AS ticket_count,
+          (SELECT al.created_at FROM account_access_logs al WHERE al.user_id = u.id ORDER BY al.created_at DESC LIMIT 1) AS last_access_at,
+          (SELECT al.ip_address FROM account_access_logs al WHERE al.user_id = u.id ORDER BY al.created_at DESC LIMIT 1) AS last_ip_address,
+          (SELECT al.user_agent FROM account_access_logs al WHERE al.user_id = u.id ORDER BY al.created_at DESC LIMIT 1) AS last_user_agent
+        FROM users u
+        WHERE (? = '' OR u.handle LIKE ? OR u.display_name LIKE ? OR u.email LIKE ?)
+        ORDER BY u.created_at DESC LIMIT 100`)
+        .bind(search, pattern, pattern, pattern)
+        .all();
+      return json({ users: (result.results || []).map(adminUserDto), search });
+    }
+
+    const adminUserMatch = path.match(/^\/api\/admin\/users\/([^/]+)$/);
+    if (request.method === "GET" && adminUserMatch) {
+      const auth = await requirePortalUser(request, env.DB, "admin");
+      if (auth.response) return auth.response;
+      const user = await env.DB.prepare(`SELECT u.*,
+          (SELECT COUNT(*) FROM recipes r WHERE r.author_id = u.id) AS recipe_count,
+          (SELECT COUNT(*) FROM comments c WHERE c.author_id = u.id) AS comment_count,
+          (SELECT COUNT(*) FROM follows f WHERE f.followed_id = u.id) AS follower_count,
+          (SELECT COUNT(*) FROM support_tickets st WHERE st.user_id = u.id) AS ticket_count,
+          (SELECT al.created_at FROM account_access_logs al WHERE al.user_id = u.id ORDER BY al.created_at DESC LIMIT 1) AS last_access_at,
+          (SELECT al.ip_address FROM account_access_logs al WHERE al.user_id = u.id ORDER BY al.created_at DESC LIMIT 1) AS last_ip_address,
+          (SELECT al.user_agent FROM account_access_logs al WHERE al.user_id = u.id ORDER BY al.created_at DESC LIMIT 1) AS last_user_agent
+        FROM users u WHERE u.id = ?`)
+        .bind(adminUserMatch[1]).first();
+      if (!user) return error(404, "USER_NOT_FOUND", "No encontramos esa cuenta.");
+      const access = await env.DB.prepare(`SELECT id, ip_address, user_agent, action, created_at
+        FROM account_access_logs WHERE user_id = ? ORDER BY created_at DESC LIMIT 50`)
+        .bind(user.id).all();
+      return json({
+        user: adminUserDto(user),
+        access: (access.results || []).map((row) => ({ id: row.id, ipAddress: row.ip_address, userAgent: row.user_agent, action: row.action, createdAt: row.created_at })),
+      });
+    }
+
+    const adminBanMatch = path.match(/^\/api\/admin\/users\/([^/]+)\/ban$/);
+    if (request.method === "POST" && adminBanMatch) {
+      const auth = await requirePortalUser(request, env.DB, "admin");
+      if (auth.response) return auth.response;
+      const target = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(adminBanMatch[1]).first();
+      if (!target) return error(404, "USER_NOT_FOUND", "No encontramos esa cuenta.");
+      if (isTeamMember(target)) return error(422, "TEAM_ACCOUNT_PROTECTED", "Las cuentas del equipo no se pueden bloquear desde el panel.");
+      const body = await readBody(request);
+      const banned = Boolean(body.banned);
+      const reason = cleanText(body.reason, 300);
+      if (banned && reason.length < 3) return error(422, "BAN_REASON_REQUIRED", "Escribí el motivo del bloqueo.");
+      const changedAt = now();
+      await env.DB.batch([
+        env.DB.prepare("UPDATE users SET is_banned = ?, banned_at = ?, banned_reason = ?, banned_by = ? WHERE id = ?")
+          .bind(banned ? 1 : 0, banned ? changedAt : null, banned ? reason : "", banned ? auth.user.id : null, target.id),
+        env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(target.id),
+      ]);
+      await auditAdmin(env.DB, auth.user.id, banned ? "user_banned" : "user_unbanned", { targetUserId: target.id, detail: reason });
+      const updated = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(target.id).first();
+      return json({ user: adminUserDto(updated) });
+    }
+
+    const adminEndLiveMatch = path.match(/^\/api\/admin\/live\/([^/]+)\/end$/);
+    if (request.method === "POST" && adminEndLiveMatch) {
+      const auth = await requirePortalUser(request, env.DB, "admin");
+      if (auth.response) return auth.response;
+      const active = await env.DB.prepare("SELECT id, user_id, title FROM live_streams WHERE id = ? AND status = 'live'")
+        .bind(adminEndLiveMatch[1]).first();
+      if (!active) return error(404, "LIVE_NOT_FOUND", "Ese directo ya terminó.");
+      const endedAt = now();
+      await env.DB.prepare("UPDATE live_streams SET status = 'ended', ended_at = ?, last_seen_at = ? WHERE id = ?")
+        .bind(endedAt, endedAt, active.id).run();
+      await auditAdmin(env.DB, auth.user.id, "live_ended", { targetUserId: active.user_id, detail: active.title });
+      return json({ ended: true, liveId: active.id });
+    }
+
+    if (request.method === "GET" && path === "/api/admin/audit") {
+      const auth = await requirePortalUser(request, env.DB, "admin");
+      if (auth.response) return auth.response;
+      const result = await env.DB.prepare(`SELECT al.*, a.handle AS admin_handle, a.display_name AS admin_name,
+          t.handle AS target_handle, t.display_name AS target_name
+        FROM admin_audit_logs al
+        JOIN users a ON a.id = al.admin_id
+        LEFT JOIN users t ON t.id = al.target_user_id
+        ORDER BY al.created_at DESC LIMIT 100`).all();
+      return json({
+        items: (result.results || []).map((row) => ({
+          id: row.id,
+          action: row.action,
+          detail: row.detail,
+          createdAt: row.created_at,
+          admin: { handle: row.admin_handle, displayName: row.admin_name },
+          target: row.target_user_id ? { id: row.target_user_id, handle: row.target_handle, displayName: row.target_name } : null,
+        })),
+      });
+    }
+
+    if (request.method === "GET" && path === "/api/admin/tickets") {
+      const auth = await requirePortalUser(request, env.DB, "admin");
+      if (auth.response) return auth.response;
+      const status = cleanText(url.searchParams.get("status"), 24);
+      const result = await env.DB.prepare(`SELECT st.*, u.handle, u.display_name, u.email, u.avatar_url, u.is_banned,
+          (SELECT COUNT(*) FROM support_messages sm WHERE sm.ticket_id = st.id) AS message_count
+        FROM support_tickets st JOIN users u ON u.id = st.user_id
+        WHERE (? = '' OR st.status = ?)
+        ORDER BY CASE st.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,
+          st.updated_at DESC LIMIT 100`)
+        .bind(status, status).all();
+      return json({ tickets: (result.results || []).map(ticketDto), status: status || null });
+    }
+
+    const adminTicketMessageMatch = path.match(/^\/api\/admin\/tickets\/([^/]+)\/messages$/);
+    if (request.method === "POST" && adminTicketMessageMatch) {
+      const auth = await requirePortalUser(request, env.DB, "admin");
+      if (auth.response) return auth.response;
+      const ticket = await getTicket(env.DB, adminTicketMessageMatch[1]);
+      if (!ticket) return error(404, "TICKET_NOT_FOUND", "No encontramos ese ticket.");
+      const body = cleanText((await readBody(request)).body, 2000);
+      if (body.length < 2) return error(422, "MESSAGE_REQUIRED", "Escribí una respuesta.");
+      const createdAt = now();
+      await env.DB.batch([
+        env.DB.prepare("INSERT INTO support_messages (id, ticket_id, author_id, author_role, body, created_at) VALUES (?, ?, ?, 'team', ?, ?)")
+          .bind(createId("msg"), ticket.id, auth.user.id, body, createdAt),
+        env.DB.prepare("UPDATE support_tickets SET status = 'waiting_user', updated_at = ?, closed_at = NULL WHERE id = ?")
+          .bind(createdAt, ticket.id),
+      ]);
+      await auditAdmin(env.DB, auth.user.id, "ticket_replied", { targetUserId: ticket.user.id, detail: ticket.subject });
+      return json({ ticket: await getTicket(env.DB, ticket.id), messages: await getTicketMessages(env.DB, ticket.id) }, 201);
+    }
+
+    const adminTicketMatch = path.match(/^\/api\/admin\/tickets\/([^/]+)$/);
+    if (request.method === "GET" && adminTicketMatch) {
+      const auth = await requirePortalUser(request, env.DB, "admin");
+      if (auth.response) return auth.response;
+      const ticket = await getTicket(env.DB, adminTicketMatch[1]);
+      if (!ticket) return error(404, "TICKET_NOT_FOUND", "No encontramos ese ticket.");
+      return json({ ticket, messages: await getTicketMessages(env.DB, ticket.id) });
+    }
+
+    if (request.method === "PATCH" && adminTicketMatch) {
+      const auth = await requirePortalUser(request, env.DB, "admin");
+      if (auth.response) return auth.response;
+      const ticket = await getTicket(env.DB, adminTicketMatch[1]);
+      if (!ticket) return error(404, "TICKET_NOT_FOUND", "No encontramos ese ticket.");
+      const input = await readBody(request);
+      const status = cleanText(input.status || ticket.status, 24);
+      const priority = cleanText(input.priority || ticket.priority, 16);
+      if (!["open", "in_progress", "waiting_user", "resolved", "closed"].includes(status)) return error(422, "INVALID_TICKET_STATUS", "El estado del ticket no es válido.");
+      if (!["low", "normal", "high", "urgent"].includes(priority)) return error(422, "INVALID_TICKET_PRIORITY", "La prioridad no es válida.");
+      const updatedAt = now();
+      const closedAt = ["resolved", "closed"].includes(status) ? updatedAt : null;
+      await env.DB.prepare("UPDATE support_tickets SET status = ?, priority = ?, updated_at = ?, closed_at = ? WHERE id = ?")
+        .bind(status, priority, updatedAt, closedAt, ticket.id).run();
+      await auditAdmin(env.DB, auth.user.id, "ticket_updated", { targetUserId: ticket.user.id, detail: `${ticket.subject} · ${status} · ${priority}` });
+      return json({ ticket: await getTicket(env.DB, ticket.id) });
+    }
+
+    if (request.method === "POST" && path === "/api/support/login") {
+      const login = validateLogin(await readBody(request));
+      if (login.error) return error(422, "INVALID_LOGIN", login.error);
+      const attemptKey = await authAttemptKey(request, `support:${login.identifier}`);
+      if (await isLoginRateLimited(env.DB, attemptKey)) {
+        return error(429, "TOO_MANY_ATTEMPTS", "Demasiados intentos. Esperá 15 minutos y probá de nuevo.");
+      }
+      const credential = await env.DB.prepare(`SELECT u.*, c.password_hash, c.password_salt, c.password_iterations
+        FROM users u JOIN credentials c ON c.user_id = u.id
+        WHERE u.email = ? OR u.handle = ? LIMIT 1`)
+        .bind(login.identifier, login.identifier).first();
+      const validPassword = credential
+        ? await verifyPassword(login.password, credential)
+        : (await derivePassword(login.password, hexToBytes("00112233445566778899aabbccddeeff")), false);
+      if (!credential || !validPassword) {
+        await recordFailedLogin(env.DB, attemptKey);
+        return error(401, "INVALID_CREDENTIALS", "El usuario o la contraseña no coinciden.");
+      }
+      await env.DB.batch([
+        env.DB.prepare("DELETE FROM auth_attempts WHERE attempt_key = ?").bind(attemptKey),
+        env.DB.prepare("DELETE FROM support_sessions WHERE expires_at <= ?").bind(now()),
+      ]);
+      const [session] = await Promise.all([
+        createPortalSession(env.DB, credential.id, "support"),
+        recordAccess(env.DB, credential.id, "support_login", clientMetadata(request, env)),
+      ]);
+      return json({
+        authenticated: true,
+        token: session.token,
+        expiresAt: session.expiresAt,
+        user: { ...userDto(credential), isBanned: Boolean(credential.is_banned), bannedReason: credential.banned_reason || "" },
+      });
+    }
+
+    if (request.method === "POST" && path === "/api/support/logout") {
+      await removePortalSession(request, env.DB, "support");
+      return json({ authenticated: false, user: null });
+    }
+
+    if (request.method === "GET" && path === "/api/support/session") {
+      const auth = await requirePortalUser(request, env.DB, "support");
+      if (auth.response) return auth.response;
+      return json({ authenticated: true, user: { ...userDto(auth.user), isBanned: Boolean(auth.user.is_banned), bannedReason: auth.user.banned_reason || "" } });
+    }
+
+    if (request.method === "GET" && path === "/api/support/tickets") {
+      const auth = await requirePortalUser(request, env.DB, "support");
+      if (auth.response) return auth.response;
+      const result = await env.DB.prepare(`SELECT st.*, u.handle, u.display_name, u.email, u.avatar_url, u.is_banned,
+          (SELECT COUNT(*) FROM support_messages sm WHERE sm.ticket_id = st.id) AS message_count
+        FROM support_tickets st JOIN users u ON u.id = st.user_id
+        WHERE st.user_id = ? ORDER BY st.updated_at DESC LIMIT 100`)
+        .bind(auth.user.id).all();
+      return json({ tickets: (result.results || []).map(ticketDto) });
+    }
+
+    if (request.method === "POST" && path === "/api/support/tickets") {
+      const auth = await requirePortalUser(request, env.DB, "support");
+      if (auth.response) return auth.response;
+      const input = await readBody(request);
+      const category = cleanText(input.category, 20);
+      const subject = cleanText(input.subject, 100);
+      const body = cleanText(input.body, 2000);
+      if (!["appeal", "bug", "account", "other"].includes(category)) return error(422, "INVALID_TICKET_CATEGORY", "Elegí un tipo de consulta.");
+      if (subject.length < 5) return error(422, "TICKET_SUBJECT_REQUIRED", "Escribí un asunto más claro.");
+      if (body.length < 15) return error(422, "TICKET_BODY_REQUIRED", "Contanos un poco más para poder ayudarte.");
+      const ticketId = createId("tkt");
+      const createdAt = now();
+      const priority = category === "appeal" && auth.user.is_banned ? "high" : "normal";
+      await env.DB.batch([
+        env.DB.prepare("INSERT INTO support_tickets (id, user_id, category, subject, status, priority, created_at, updated_at, closed_at) VALUES (?, ?, ?, ?, 'open', ?, ?, ?, NULL)")
+          .bind(ticketId, auth.user.id, category, subject, priority, createdAt, createdAt),
+        env.DB.prepare("INSERT INTO support_messages (id, ticket_id, author_id, author_role, body, created_at) VALUES (?, ?, ?, 'user', ?, ?)")
+          .bind(createId("msg"), ticketId, auth.user.id, body, createdAt),
+      ]);
+      return json({ ticket: await getTicket(env.DB, ticketId, auth.user.id), messages: await getTicketMessages(env.DB, ticketId) }, 201);
+    }
+
+    const supportTicketMessageMatch = path.match(/^\/api\/support\/tickets\/([^/]+)\/messages$/);
+    if (request.method === "POST" && supportTicketMessageMatch) {
+      const auth = await requirePortalUser(request, env.DB, "support");
+      if (auth.response) return auth.response;
+      const ticket = await getTicket(env.DB, supportTicketMessageMatch[1], auth.user.id);
+      if (!ticket) return error(404, "TICKET_NOT_FOUND", "No encontramos ese ticket.");
+      const body = cleanText((await readBody(request)).body, 2000);
+      if (body.length < 2) return error(422, "MESSAGE_REQUIRED", "Escribí un mensaje.");
+      const createdAt = now();
+      await env.DB.batch([
+        env.DB.prepare("INSERT INTO support_messages (id, ticket_id, author_id, author_role, body, created_at) VALUES (?, ?, ?, 'user', ?, ?)")
+          .bind(createId("msg"), ticket.id, auth.user.id, body, createdAt),
+        env.DB.prepare("UPDATE support_tickets SET status = 'open', updated_at = ?, closed_at = NULL WHERE id = ?")
+          .bind(createdAt, ticket.id),
+      ]);
+      return json({ ticket: await getTicket(env.DB, ticket.id, auth.user.id), messages: await getTicketMessages(env.DB, ticket.id) }, 201);
+    }
+
+    const supportTicketMatch = path.match(/^\/api\/support\/tickets\/([^/]+)$/);
+    if (request.method === "GET" && supportTicketMatch) {
+      const auth = await requirePortalUser(request, env.DB, "support");
+      if (auth.response) return auth.response;
+      const ticket = await getTicket(env.DB, supportTicketMatch[1], auth.user.id);
+      if (!ticket) return error(404, "TICKET_NOT_FOUND", "No encontramos ese ticket.");
+      return json({ ticket, messages: await getTicketMessages(env.DB, ticket.id) });
+    }
+
     if (request.method === "POST" && path === "/api/live/media-auth") {
       const suppliedSecret = request.headers.get("x-live-auth-token") || "";
       if (!env.LIVE_AUTH_TOKEN || !constantTimeEqual(suppliedSecret, env.LIVE_AUTH_TOKEN)) {
@@ -1228,6 +1802,7 @@ export async function handleApiRequest(request, env) {
       ]);
       const token = await createSession(env.DB, userId);
       const user = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first();
+      await recordAccess(env.DB, userId, "register", clientMetadata(request, env));
       return json(
         { authenticated: true, user: userDto(user), unreadNotifications: 0 },
         201,
@@ -1263,13 +1838,23 @@ export async function handleApiRequest(request, env) {
         return error(401, "INVALID_CREDENTIALS", "El usuario o la contraseña no coinciden.");
       }
 
+      if (credential.is_banned) {
+        return error(403, "ACCOUNT_BANNED", credential.banned_reason || "Esta cuenta está bloqueada.", {
+          supportUrl: env.SUPPORT_URL || "https://recetitas-soporte.stherling53.chatgpt.site",
+        });
+      }
+
       await env.DB.batch([
         env.DB.prepare("DELETE FROM auth_attempts WHERE attempt_key = ?").bind(attemptKey),
         env.DB.prepare("DELETE FROM sessions WHERE expires_at <= ?").bind(now()),
       ]);
-      const token = await createSession(env.DB, credential.id);
+      const [token, , unreadNotifications] = await Promise.all([
+        createSession(env.DB, credential.id),
+        recordAccess(env.DB, credential.id, "login", clientMetadata(request, env)),
+        unreadNotificationCount(env.DB, credential.id),
+      ]);
       return json(
-        { authenticated: true, user: userDto(credential), unreadNotifications: await unreadNotificationCount(env.DB, credential.id) },
+        { authenticated: true, user: userDto(credential), unreadNotifications },
         200,
         { "set-cookie": sessionCookie(request, token) },
       );

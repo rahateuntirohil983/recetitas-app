@@ -7,6 +7,7 @@ import {
   PhHeart,
   PhArrowRight,
   PhPencilSimple,
+  PhShieldCheck,
   PhTrash,
   PhUsers,
 } from "@phosphor-icons/vue";
@@ -37,7 +38,7 @@ const openCard = (event, recipe) => {
       <button type="button" class="focus-ring flex min-w-0 items-center gap-3 text-left" @click="$emit('profile', recipe.author.handle)">
         <PigAvatar :index="recipe.author.avatarIndex" :size="44" :label="`Avatar de ${recipe.author.displayName}`" class="ring-2 ring-charcoal/15" />
         <div class="min-w-0">
-          <p class="truncate font-semibold text-charcoal">{{ recipe.author.displayName }}</p>
+          <p class="flex items-center gap-1 truncate font-semibold text-charcoal">{{ recipe.author.displayName }} <PhShieldCheck v-if="recipe.author.isTeam" :size="16" weight="fill" class="shrink-0 text-olive-dark" aria-label="Equipo de recetitas" /></p>
           <p class="truncate text-sm text-charcoal/55">@{{ recipe.author.handle }}</p>
         </div>
       </button>

@@ -14,7 +14,7 @@ import BrandMark from "./BrandMark.vue";
         <a class="footer-link" href="/app/?view=saved">Mis guardadas</a>
         <a class="footer-link" href="mailto:hola@recetitas.app?subject=Quiénes somos">Quiénes somos</a>
         <a class="footer-link" href="/app/?compose=1">Compartir receta</a>
-        <a class="footer-link inline-flex items-center gap-1" href="mailto:hola@recetitas.app">Contacto <PhArrowUpRight :size="14" aria-hidden="true" /></a>
+        <a class="footer-link inline-flex items-center gap-1" href="https://recetitas-soporte.stherling53.chatgpt.site">Soporte <PhArrowUpRight :size="14" aria-hidden="true" /></a>
       </nav>
 
       <p class="font-display text-2xl leading-tight text-blush md:text-right">
