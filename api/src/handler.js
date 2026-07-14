@@ -302,10 +302,15 @@ const readBody = async (request) => {
 
 const isWriteRequest = (request) => !["GET", "HEAD", "OPTIONS"].includes(request.method);
 
+const PORTAL_ORIGINS = new Set([
+  "https://recetitas-admin.stherling53.chatgpt.site",
+  "https://recetitas-soporte.stherling53.chatgpt.site",
+]);
+
 const hasValidOrigin = (request) => {
   if (!isWriteRequest(request)) return true;
   const origin = request.headers.get("origin");
-  return !origin || origin === new URL(request.url).origin;
+  return !origin || origin === new URL(request.url).origin || PORTAL_ORIGINS.has(origin);
 };
 
 const bytesToHex = (bytes) => [...new Uint8Array(bytes)]

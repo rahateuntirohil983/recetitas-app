@@ -1,5 +1,25 @@
 import { handleApiRequest } from "../api/src/handler.js";
 
+const PORTAL_ORIGINS = new Set([
+  "https://recetitas-admin.stherling53.chatgpt.site",
+  "https://recetitas-soporte.stherling53.chatgpt.site",
+]);
+
+const withPortalCors = (request, response) => {
+  const origin = request.headers.get("origin");
+  if (!origin || !PORTAL_ORIGINS.has(origin)) return response;
+  const headers = new Headers(response.headers);
+  headers.set("access-control-allow-origin", origin);
+  headers.set("access-control-allow-methods", "GET,POST,PATCH,DELETE,OPTIONS");
+  headers.set("access-control-allow-headers", "authorization,content-type");
+  headers.append("vary", "Origin");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+};
+
 const noCacheHtml = (response) => {
   const headers = new Headers(response.headers);
   headers.set("cache-control", "no-cache, no-store, max-age=0, must-revalidate");
@@ -13,7 +33,7 @@ const worker = {
     const url = new URL(request.url);
 
     if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
-      return handleApiRequest(request, env);
+      return withPortalCors(request, await handleApiRequest(request, env));
     }
 
     const asset = await env.ASSETS.fetch(request);
