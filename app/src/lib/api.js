@@ -250,7 +250,7 @@ export const api = {
     };
     comments[recipeId] = [...(comments[recipeId] || []), comment];
     await pause(180);
-    return { id: comment.id };
+    return { comment };
   },
 
   async deleteComment(recipeId, commentId) {

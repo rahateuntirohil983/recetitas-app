@@ -11,6 +11,7 @@ const props = defineProps({
   live: { type: Object, required: true },
   authenticated: { type: Boolean, default: false },
   viewerId: { type: String, default: "" },
+  viewer: { type: Object, default: null },
 });
 
 const emit = defineEmits(["login", "ended"]);
@@ -26,6 +27,7 @@ const paused = ref(false);
 const volume = ref(0.8);
 const quality = ref("auto");
 const sending = ref(false);
+const chatError = ref("");
 const chatFollowsLatest = ref(true);
 const hasNewComments = ref(false);
 
@@ -91,11 +93,13 @@ const scheduleReconnect = () => {
 };
 
 const refreshEvents = async () => {
+  if (document.hidden) return;
   try {
     const previousPlaybackUrl = currentLive.value.playbackUrl;
     const response = await api.liveEvents(currentLive.value.id);
     currentLive.value = { ...currentLive.value, ...response.live };
-    comments.value = response.comments;
+    const pendingComments = comments.value.filter((comment) => comment.id.startsWith("pending_"));
+    comments.value = [...response.comments, ...pendingComments];
     if (response.live.status === "ended") {
       stopped = true;
       await reader?.close();
@@ -111,7 +115,9 @@ const refreshEvents = async () => {
   }
 };
 
-const sendHeartbeat = () => api.liveHeartbeat(currentLive.value.id, viewerKey).catch(() => null);
+const sendHeartbeat = () => document.hidden
+  ? Promise.resolve()
+  : api.liveHeartbeat(currentLive.value.id, viewerKey).catch(() => null);
 
 const toggleLike = async () => {
   if (!props.authenticated) {
@@ -136,12 +142,38 @@ const addComment = async () => {
 
 const sendComment = async (body) => {
   if (!body || sending.value) return;
+  const temporaryId = `pending_${crypto.randomUUID()}`;
+  const optimisticComment = {
+    id: temporaryId,
+    body,
+    createdAt: new Date().toISOString(),
+    author: {
+      id: props.viewer?.id || props.viewerId,
+      handle: props.viewer?.handle || "vos",
+      displayName: props.viewer?.displayName || "Vos",
+      avatarUrl: props.viewer?.avatarUrl || null,
+      avatarIndex: props.viewer?.avatarIndex || 0,
+      isOwner: props.viewerId === currentLive.value.author.id,
+      isModerator: Boolean(currentLive.value.permissions?.isModerator),
+      isBanned: false,
+    },
+  };
   sending.value = true;
+  chatError.value = "";
+  comments.value = [...comments.value, optimisticComment];
+  commentBody.value = "";
+  chatFollowsLatest.value = true;
+  scrollToLatest(true);
   try {
-    await api.addLiveComment(currentLive.value.id, body);
-    commentBody.value = "";
-    chatFollowsLatest.value = true;
-    await refreshEvents();
+    const response = await api.addLiveComment(currentLive.value.id, body);
+    const withoutTemporary = comments.value.filter((comment) => comment.id !== temporaryId);
+    comments.value = response.comment && !withoutTemporary.some((comment) => comment.id === response.comment.id)
+      ? [...withoutTemporary, response.comment]
+      : withoutTemporary;
+  } catch (failure) {
+    comments.value = comments.value.filter((comment) => comment.id !== temporaryId);
+    if (!liveStickerFromBody(body) && !commentBody.value) commentBody.value = body;
+    chatError.value = failure.message || "No pudimos enviar el comentario.";
   } finally {
     sending.value = false;
   }
@@ -288,6 +320,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <button v-if="hasNewComments" type="button" class="focus-ring mt-2 w-full bg-olive px-3 py-2 text-sm font-bold text-charcoal" @click="scrollToLatest(true)">Ver comentarios nuevos ↓</button>
+        <p v-if="chatError" class="mt-2 border-l-4 border-blush px-3 py-2 text-sm text-porcelain/75" role="alert">{{ chatError }}</p>
         <form class="mt-4 grid grid-cols-[auto_minmax(0,1fr)_auto] gap-2" @submit.prevent="addComment">
           <LiveStickerPicker :disabled="sending" dark @select="sendSticker" />
           <input v-model="commentBody" maxlength="180" class="min-h-12 min-w-0 border border-porcelain/35 bg-transparent px-3 text-porcelain placeholder:text-porcelain/40" :placeholder="authenticated ? 'Comentá en vivo' : 'Iniciá sesión para comentar'" @focus="!authenticated && $emit('login')" />

@@ -146,6 +146,10 @@ test("starts, authorizes and publishes a live stream on the existing production 
     body: { body: "[[sticker:heart]]" },
   }), env);
   assert.equal(stickerCommentResponse.status, 201);
+  const stickerComment = await stickerCommentResponse.json();
+  assert.equal(stickerComment.comment.body, "[[sticker:heart]]");
+  assert.equal(stickerComment.comment.author.id, "user-live");
+  assert.equal(stickerComment.comment.author.isOwner, true);
 
   const suspendResponse = await handleApiRequest(apiRequest(`/api/live/${started.live.id}/suspend`, {
     method: "POST",

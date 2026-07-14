@@ -26,6 +26,11 @@ const worker = {
           headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
         });
       }
+      if (isAssetPath) {
+        const headers = new Headers(asset.headers);
+        headers.set("cache-control", "public, max-age=31536000, immutable");
+        return new Response(asset.body, { status: asset.status, statusText: asset.statusText, headers });
+      }
       const isPigImage = /^\/app\/avatars\/pig-\d{2}\.webp$/.test(url.pathname)
         || /^\/app\/stickers\/pig-[a-z-]+\.webp$/.test(url.pathname);
       if (isPigImage) {

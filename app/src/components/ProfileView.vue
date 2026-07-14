@@ -8,6 +8,7 @@ defineProps({
   profile: { type: Object, default: null },
   recipes: { type: Array, default: () => [] },
   viewerId: { type: String, default: "" },
+  viewer: { type: Object, default: null },
   loading: { type: Boolean, default: false },
   busy: { type: Boolean, default: false },
   authenticated: { type: Boolean, default: false },
@@ -70,6 +71,7 @@ defineEmits(["back", "edit", "edit-recipe", "follow", "connections", "open", "ta
         :live="profile.live"
         :authenticated="authenticated"
         :viewer-id="viewerId"
+        :viewer="viewer"
         @login="$emit('login')"
         @ended="$emit('live-ended')"
       />

@@ -358,13 +358,28 @@ const addComment = async (body) => {
     loginOpen.value = true;
     return;
   }
+  const recipeId = selectedRecipe.value.id;
+  const temporaryId = `pending_${crypto.randomUUID()}`;
+  const optimisticComment = {
+    id: temporaryId,
+    body,
+    createdAt: new Date().toISOString(),
+    author: session.value.user,
+  };
+  comments.value = [...comments.value, optimisticComment];
+  replaceRecipe({ ...selectedRecipe.value, commentCount: selectedRecipe.value.commentCount + 1 });
   busy.value = true;
   try {
-    await api.addComment(selectedRecipe.value.id, body);
-    comments.value = (await api.comments(selectedRecipe.value.id)).comments;
-    const recipe = { ...selectedRecipe.value, commentCount: selectedRecipe.value.commentCount + 1 };
-    replaceRecipe(recipe);
+    const response = await api.addComment(recipeId, body);
+    comments.value = comments.value.map((comment) => comment.id === temporaryId
+      ? (response.comment || optimisticComment)
+      : comment);
   } catch (failure) {
+    comments.value = comments.value.filter((comment) => comment.id !== temporaryId);
+    const recipe = selectedRecipe.value?.id === recipeId
+      ? selectedRecipe.value
+      : recipes.value.find((item) => item.id === recipeId);
+    if (recipe) replaceRecipe({ ...recipe, commentCount: Math.max(0, recipe.commentCount - 1) });
     flash(failure.message);
   } finally {
     busy.value = false;
@@ -518,16 +533,20 @@ const publishRecipe = async (payload) => {
 
 onMounted(async () => {
   try {
-    session.value = await api.session();
-    unreadNotifications.value = Number(session.value.unreadNotifications || 0);
+    const sessionRequest = api.session();
     const params = new URLSearchParams(window.location.search);
     const requestedView = ["saved", "discover"].includes(params.get("view")) ? params.get("view") : "feed";
     selectedDiscoverTag.value = params.get("tag") || "";
     const profileRoute = window.location.pathname.match(/^\/app\/u\/([a-z0-9_]{3,24})\/?$/i);
     const recipeRoute = window.location.pathname.match(/^\/app\/r\/([^/]+)\/?$/i);
-    if (recipeRoute) await openRecipe(decodeURIComponent(recipeRoute[1]), false);
-    else if (profileRoute) await openProfile(profileRoute[1], false);
-    else await loadView(requestedView, false);
+    const contentRequest = recipeRoute
+      ? openRecipe(decodeURIComponent(recipeRoute[1]), false)
+      : profileRoute
+        ? openProfile(profileRoute[1], false)
+        : loadView(requestedView, false);
+    const [nextSession] = await Promise.all([sessionRequest, contentRequest]);
+    session.value = nextSession;
+    unreadNotifications.value = Number(nextSession.unreadNotifications || 0);
     if (["1", "register"].includes(params.get("login"))) loginOpen.value = true;
     if (params.get("compose") === "1") startPublishing();
 
@@ -678,6 +697,7 @@ onMounted(async () => {
         :profile="profile"
         :recipes="profileRecipes"
         :viewer-id="session.user?.id || ''"
+        :viewer="session.user"
         :loading="profileLoading"
         :busy="busy"
         :authenticated="session.authenticated"

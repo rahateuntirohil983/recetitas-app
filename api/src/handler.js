@@ -172,6 +172,7 @@ let schemaReady;
 let recipeColumnsReady;
 let liveColumnsReady;
 let demoCleanupReady;
+const sessionUserCache = new WeakMap();
 
 const json = (data, status = 200, extraHeaders = {}) => new Response(JSON.stringify(data), {
   status,
@@ -493,16 +494,24 @@ const createSession = async (db, userId) => {
   return token;
 };
 
-const getSessionUser = async (request, db) => {
-  const token = parseCookies(request)[SESSION_COOKIE];
-  if (!/^[a-f0-9]{64}$/i.test(token || "")) return null;
-  const tokenHash = await sha256(token);
-  return db.prepare(`SELECT u.*
-    FROM sessions s
-    JOIN users u ON u.id = s.user_id
-    WHERE s.token_hash = ? AND s.expires_at > ?`)
-    .bind(tokenHash, now())
-    .first();
+const getSessionUser = (request, db) => {
+  const cached = sessionUserCache.get(request);
+  if (cached) return cached;
+
+  const lookup = (async () => {
+    const token = parseCookies(request)[SESSION_COOKIE];
+    if (!/^[a-f0-9]{64}$/i.test(token || "")) return null;
+    const tokenHash = await sha256(token);
+    return db.prepare(`SELECT u.*
+      FROM sessions s
+      JOIN users u ON u.id = s.user_id
+      WHERE s.token_hash = ? AND s.expires_at > ?`)
+      .bind(tokenHash, now())
+      .first();
+  })();
+
+  sessionUserCache.set(request, lookup);
+  return lookup;
 };
 
 const removeSession = async (request, db) => {
@@ -845,10 +854,14 @@ export async function handleApiRequest(request, env) {
   }
 
   try {
-    await ensureSchema(env.DB);
-    await ensureRecipeColumns(env.DB);
-    await ensureLiveColumns(env.DB);
-    await cleanupDemoData(env.DB);
+    // Sites applies the checked-in D1 migrations before serving production traffic.
+    // Keep the runtime bootstrap for isolated tests and standalone API deployments.
+    if (!env.ASSETS) {
+      await ensureSchema(env.DB);
+      await ensureRecipeColumns(env.DB);
+      await ensureLiveColumns(env.DB);
+      await cleanupDemoData(env.DB);
+    }
 
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, "") || "/api";
@@ -1121,14 +1134,33 @@ export async function handleApiRequest(request, env) {
           .bind(liveId, liveActiveCutoff())
           .first();
         if (!active) return error(404, "LIVE_ENDED", "El directo terminó.");
-        if ((await getLiveRole(env.DB, liveId, auth.user.id)).banned) return error(403, "LIVE_CHAT_BANNED", "Fuiste bloqueado de este chat.");
+        const authorRole = await getLiveRole(env.DB, liveId, auth.user.id);
+        if (authorRole.banned) return error(403, "LIVE_CHAT_BANNED", "Fuiste bloqueado de este chat.");
         const body = normalizeLiveComment((await readBody(request)).body);
         if (!body) return error(422, "EMPTY_LIVE_COMMENT", "Escribí un comentario.");
         const commentId = createId("lvc");
+        const createdAt = now();
         await env.DB.prepare("INSERT INTO live_comments (id, live_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)")
-          .bind(commentId, liveId, auth.user.id, body, now())
+          .bind(commentId, liveId, auth.user.id, body, createdAt)
           .run();
-        return json({ id: commentId }, 201);
+        const author = userDto(auth.user, { includeEmail: false });
+        return json({
+          comment: {
+            id: commentId,
+            body,
+            createdAt,
+            author: {
+              id: author.id,
+              handle: author.handle,
+              displayName: author.displayName,
+              avatarUrl: author.avatarUrl,
+              avatarIndex: author.avatarIndex,
+              isOwner: authorRole.isOwner,
+              isModerator: authorRole.isModerator,
+              isBanned: false,
+            },
+          },
+        }, 201);
       }
     }
 
@@ -1599,11 +1631,19 @@ export async function handleApiRequest(request, env) {
         const comment = cleanText(body.body, 500);
         if (!comment) return error(422, "INVALID_COMMENT", "Escribí un comentario antes de publicar.");
         const commentId = createId("cmt");
+        const createdAt = now();
         await env.DB.prepare("INSERT INTO comments (id, recipe_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)")
-          .bind(commentId, recipeId, auth.user.id, comment, now())
+          .bind(commentId, recipeId, auth.user.id, comment, createdAt)
           .run();
         await createNotification(env.DB, { userId: recipe.author.id, actorId: auth.user.id, type: "comment", recipeId, commentId });
-        return json({ id: commentId }, 201);
+        return json({
+          comment: {
+            id: commentId,
+            body: comment,
+            createdAt,
+            author: userDto(auth.user, { includeEmail: false }),
+          },
+        }, 201);
       }
 
       if (request.method === "DELETE" && !action) {

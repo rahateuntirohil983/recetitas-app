@@ -245,11 +245,12 @@ const toggleCamera = () => {
 };
 
 const refreshEvents = async () => {
-  if (!live.value) return;
+  if (!live.value || document.hidden) return;
   try {
     const response = await api.liveEvents(live.value.id);
     live.value = { ...live.value, ...response.live };
-    comments.value = response.comments;
+    const pendingComments = comments.value.filter((comment) => comment.id.startsWith("pending_"));
+    comments.value = [...response.comments, ...pendingComments];
     if (response.moderation) moderation.value = response.moderation;
     if (response.live.status === "ended") await finish(false);
   } catch {
@@ -390,12 +391,31 @@ const addComment = async () => {
 
 const sendChatBody = async (body) => {
   if (!body || !live.value) return;
+  const temporaryId = `pending_${crypto.randomUUID()}`;
+  const optimisticComment = {
+    id: temporaryId,
+    body,
+    createdAt: new Date().toISOString(),
+    author: {
+      ...live.value.author,
+      isOwner: true,
+      isModerator: false,
+      isBanned: false,
+    },
+  };
+  comments.value = [...comments.value, optimisticComment];
+  commentBody.value = "";
+  chatFollowsLatest.value = true;
+  scrollToLatest(true);
   try {
-    await api.addLiveComment(live.value.id, body);
-    commentBody.value = "";
-    chatFollowsLatest.value = true;
-    await refreshEvents();
+    const response = await api.addLiveComment(live.value.id, body);
+    const withoutTemporary = comments.value.filter((comment) => comment.id !== temporaryId);
+    comments.value = response.comment && !withoutTemporary.some((comment) => comment.id === response.comment.id)
+      ? [...withoutTemporary, response.comment]
+      : withoutTemporary;
   } catch (failure) {
+    comments.value = comments.value.filter((comment) => comment.id !== temporaryId);
+    if (!liveStickerFromBody(body) && !commentBody.value) commentBody.value = body;
     errorMessage.value = failure.message;
   }
 };
