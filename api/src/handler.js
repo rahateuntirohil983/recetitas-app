@@ -1264,6 +1264,99 @@ export async function handleApiRequest(request, env) {
       return json({ ended: true, liveId: active.id });
     }
 
+    if (request.method === "GET" && path === "/api/admin/content") {
+      const auth = await requirePortalUser(request, env.DB, "admin");
+      if (auth.response) return auth.response;
+      const search = cleanText(url.searchParams.get("search"), 80);
+      const pattern = `%${search}%`;
+      const [recipesResult, commentsResult] = await Promise.all([
+        env.DB.prepare(`SELECT r.id, r.title, r.summary, r.image_url, r.video_url, r.created_at,
+            u.id AS user_id, u.handle, u.display_name
+          FROM recipes r JOIN users u ON u.id = r.author_id
+          WHERE (? = '' OR r.title LIKE ? OR r.summary LIKE ? OR u.handle LIKE ? OR u.display_name LIKE ?)
+          ORDER BY r.created_at DESC LIMIT 80`)
+          .bind(search, pattern, pattern, pattern, pattern).all(),
+        env.DB.prepare(`SELECT c.id, c.body, c.created_at, c.recipe_id, r.title AS recipe_title,
+            u.id AS user_id, u.handle, u.display_name
+          FROM comments c
+          JOIN users u ON u.id = c.author_id
+          JOIN recipes r ON r.id = c.recipe_id
+          WHERE (? = '' OR c.body LIKE ? OR u.handle LIKE ? OR u.display_name LIKE ? OR r.title LIKE ?)
+          ORDER BY c.created_at DESC LIMIT 120`)
+          .bind(search, pattern, pattern, pattern, pattern).all(),
+      ]);
+      return json({
+        search,
+        recipes: (recipesResult.results || []).map((row) => ({
+          id: row.id,
+          kind: "recipe",
+          title: row.title,
+          summary: row.summary,
+          imageUrl: row.image_url || null,
+          videoUrl: row.video_url || null,
+          createdAt: row.created_at,
+          author: { id: row.user_id, handle: row.handle, displayName: row.display_name },
+        })),
+        comments: (commentsResult.results || []).map((row) => ({
+          id: row.id,
+          kind: "comment",
+          body: row.body,
+          recipe: { id: row.recipe_id, title: row.recipe_title },
+          createdAt: row.created_at,
+          author: { id: row.user_id, handle: row.handle, displayName: row.display_name },
+        })),
+      });
+    }
+
+    const adminRecipeMatch = path.match(/^\/api\/admin\/recipes\/([^/]+)$/);
+    if (request.method === "DELETE" && adminRecipeMatch) {
+      const auth = await requirePortalUser(request, env.DB, "admin");
+      if (auth.response) return auth.response;
+      const recipe = await env.DB.prepare(`SELECT r.id, r.author_id, r.title, r.image_url, r.video_url, u.handle
+        FROM recipes r JOIN users u ON u.id = r.author_id WHERE r.id = ?`)
+        .bind(adminRecipeMatch[1]).first();
+      if (!recipe) return error(404, "RECIPE_NOT_FOUND", "No encontramos esa receta.");
+      const mediaUrls = [recipe.image_url, recipe.video_url].filter(Boolean);
+      if (mediaUrls.length && env.MEDIA_UPLOAD_URL && env.MEDIA_UPLOAD_TOKEN) {
+        for (const mediaUrl of mediaUrls) {
+          const deleted = await fetch(new URL("/delete", env.MEDIA_UPLOAD_URL), {
+            method: "DELETE",
+            headers: {
+              authorization: `Bearer ${env.MEDIA_UPLOAD_TOKEN}`,
+              "x-user-id": recipe.author_id,
+              "x-file-url": mediaUrl,
+            },
+          });
+          if (!deleted.ok) return error(502, "MEDIA_DELETE_FAILED", "No pudimos eliminar uno de los archivos de la publicación.");
+        }
+      }
+      await env.DB.prepare("DELETE FROM recipes WHERE id = ?").bind(recipe.id).run();
+      await auditAdmin(env.DB, auth.user.id, "recipe_deleted", {
+        targetUserId: recipe.author_id,
+        detail: `${recipe.title} · @${recipe.handle} · ${recipe.id}`,
+      });
+      return new Response(null, { status: 204 });
+    }
+
+    const adminCommentMatch = path.match(/^\/api\/admin\/comments\/([^/]+)$/);
+    if (request.method === "DELETE" && adminCommentMatch) {
+      const auth = await requirePortalUser(request, env.DB, "admin");
+      if (auth.response) return auth.response;
+      const comment = await env.DB.prepare(`SELECT c.id, c.author_id, c.body, c.recipe_id, u.handle, r.title AS recipe_title
+        FROM comments c
+        JOIN users u ON u.id = c.author_id
+        JOIN recipes r ON r.id = c.recipe_id
+        WHERE c.id = ?`)
+        .bind(adminCommentMatch[1]).first();
+      if (!comment) return error(404, "COMMENT_NOT_FOUND", "No encontramos ese comentario.");
+      await env.DB.prepare("DELETE FROM comments WHERE id = ?").bind(comment.id).run();
+      await auditAdmin(env.DB, auth.user.id, "comment_deleted", {
+        targetUserId: comment.author_id,
+        detail: `${cleanText(comment.body, 140)} · ${comment.recipe_title} · @${comment.handle}`,
+      });
+      return new Response(null, { status: 204 });
+    }
+
     if (request.method === "GET" && path === "/api/admin/audit") {
       const auth = await requirePortalUser(request, env.DB, "admin");
       if (auth.response) return auth.response;

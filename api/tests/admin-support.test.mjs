@@ -92,6 +92,37 @@ test("team members administer users and answer banned-account appeals", async (c
   const adminLogin = await adminLoginResponse.json();
   assert.equal(adminLogin.user.isTeam, true);
 
+  const contentAuthor = database.prepare("SELECT id FROM users WHERE handle = 'personatest'").get();
+  database.prepare(`INSERT INTO recipes (
+      id, author_id, title, summary, image_key, cook_minutes, servings, ingredients_json, steps_json, created_at
+    ) VALUES (?, ?, ?, ?, 'pumpkin', 20, 2, '["harina"]', '["mezclar"]', ?)`)
+    .run("rcp_admin_test", contentAuthor.id, "Publicación para moderar", "Contenido creado para probar la moderación.", new Date().toISOString());
+  database.prepare("INSERT INTO comments (id, recipe_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)")
+    .run("cmt_admin_test", "rcp_admin_test", contentAuthor.id, "Comentario para moderar", new Date().toISOString());
+
+  const contentResponse = await handleApiRequest(apiRequest("/api/admin/content?search=personatest", {
+    authorization: adminLogin.token,
+  }), env);
+  assert.equal(contentResponse.status, 200);
+  const content = await contentResponse.json();
+  assert.equal(content.recipes[0].id, "rcp_admin_test");
+  assert.equal(content.comments[0].id, "cmt_admin_test");
+
+  const deleteCommentResponse = await handleApiRequest(apiRequest("/api/admin/comments/cmt_admin_test", {
+    method: "DELETE",
+    authorization: adminLogin.token,
+  }), env);
+  assert.equal(deleteCommentResponse.status, 204);
+  assert.equal(database.prepare("SELECT COUNT(*) AS count FROM comments WHERE id = 'cmt_admin_test'").get().count, 0);
+
+  const deleteRecipeResponse = await handleApiRequest(apiRequest("/api/admin/recipes/rcp_admin_test", {
+    method: "DELETE",
+    authorization: adminLogin.token,
+  }), env);
+  assert.equal(deleteRecipeResponse.status, 204);
+  assert.equal(database.prepare("SELECT COUNT(*) AS count FROM recipes WHERE id = 'rcp_admin_test'").get().count, 0);
+  assert.equal(database.prepare("SELECT COUNT(*) AS count FROM admin_audit_logs WHERE action IN ('recipe_deleted', 'comment_deleted')").get().count, 2);
+
   const usersResponse = await handleApiRequest(apiRequest("/api/admin/users?search=personatest", {
     authorization: adminLogin.token,
   }), env);
