@@ -105,7 +105,7 @@ onBeforeUnmount(() => { window.clearInterval(interval); document.removeEventList
 
           <section class="flex flex-1 flex-col justify-center py-10 sm:py-14">
             <p class="text-sm font-bold uppercase tracking-[0.18em] text-olive-dark">Paso {{ current + 1 }} de {{ recipe.steps.length }}</p>
-            <div class="mt-3 grid grid-cols-[3.2rem_minmax(0,1fr)] gap-4 sm:grid-cols-[4.5rem_minmax(0,1fr)] sm:gap-7"><span class="grid size-13 place-items-center bg-charcoal font-display text-2xl font-bold text-porcelain sm:size-18 sm:text-4xl">{{ current + 1 }}</span><p class="min-w-0 whitespace-normal break-all font-sans text-[clamp(1.2rem,5vw,1.75rem)] font-normal leading-[1.55] tracking-normal [overflow-wrap:anywhere]">{{ recipe.steps[current] }}</p></div>
+            <div class="mt-3 grid grid-cols-[3.2rem_minmax(0,1fr)] gap-4 sm:grid-cols-[4.5rem_minmax(0,1fr)] sm:gap-7"><span class="grid size-13 place-items-center bg-charcoal font-display text-2xl font-bold text-porcelain sm:size-18 sm:text-4xl">{{ current + 1 }}</span><p class="min-w-0 whitespace-normal break-words font-sans text-[clamp(1.2rem,5vw,1.75rem)] font-normal leading-[1.55] tracking-normal">{{ recipe.steps[current] }}</p></div>
             <button type="button" class="focus-ring mt-8 inline-flex min-h-14 w-full items-center justify-center gap-2 border-2 border-charcoal px-5 font-bold sm:w-auto sm:self-start" :class="completed.has(current) ? 'bg-olive' : 'bg-blush'" @click="markAndNext"><PhCheck :size="22" weight="bold" /> {{ completed.has(current) ? 'Marcar pendiente' : current === recipe.steps.length - 1 ? 'Marcar como listo' : 'Listo, siguiente paso' }}</button>
           </section>
 
