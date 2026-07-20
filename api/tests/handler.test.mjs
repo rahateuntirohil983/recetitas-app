@@ -81,6 +81,22 @@ test("normalizes and validates a complete recipe", () => {
   assert.equal(recipe.title, "Ñoquis de calabaza");
   assert.equal(recipe.cookMinutes, 45);
   assert.equal(recipe.error, undefined);
+  assert.equal(recipe.timerEnabled, true);
+});
+
+test("allows recipes to disable the cooking timer", () => {
+  const recipe = __test.validateRecipe({
+    title: "Ensalada fresca",
+    summary: "Una receta simple que no necesita temporizador.",
+    cookMinutes: 10,
+    timerEnabled: false,
+    servings: 2,
+    ingredients: ["Tomate", "Lechuga"],
+    steps: ["Mezclar y servir"],
+  });
+
+  assert.equal(recipe.error, undefined);
+  assert.equal(recipe.timerEnabled, false);
 });
 
 test("understands a natural-language pantry list and scores recipes", () => {

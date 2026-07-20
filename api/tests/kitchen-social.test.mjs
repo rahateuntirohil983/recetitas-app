@@ -48,6 +48,7 @@ test("persists assisted-cooking and social recipe features", async (context) => 
       title: "Panqueques de prueba",
       summary: "Una receta completa para validar la cocina asistida.",
       cookMinutes: 20,
+      timerEnabled: false,
       servings: 4,
       difficulty: "medium",
       language: "es",
@@ -59,6 +60,7 @@ test("persists assisted-cooking and social recipe features", async (context) => 
   assert.equal(createdResponse.status, 201);
   const created = await createdResponse.json();
   assert.equal(created.recipe.difficulty, "medium");
+  assert.equal(created.recipe.timerEnabled, false);
   assert.equal(created.recipe.poll.options.length, 2);
 
   const voteResponse = await handleApiRequest(request(`/api/recipes/${created.recipe.id}/poll`, {

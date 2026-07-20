@@ -6,14 +6,18 @@ const props = defineProps({
   open: { type: Boolean, default: false },
   busy: { type: Boolean, default: false },
   recipe: { type: Object, default: null },
+  submitError: { type: String, default: "" },
 });
-const emit = defineEmits(["close", "submit"]);
+const emit = defineEmits(["close", "submit", "clear-error"]);
 
 const error = ref("");
 const titleInput = ref(null);
 const summaryInput = ref(null);
+const cookMinutesInput = ref(null);
+const servingsInput = ref(null);
 const ingredientsInput = ref(null);
 const stepsInput = ref(null);
+const pollQuestionInput = ref(null);
 const editNoteInput = ref(null);
 const fieldErrors = reactive({ title: "", summary: "", cookMinutes: "", servings: "", ingredients: "", steps: "", poll: "", editNote: "" });
 const imageFile = ref(null);
@@ -38,6 +42,7 @@ const form = reactive({
   title: "",
   summary: "",
   cookMinutes: 35,
+  timerEnabled: true,
   servings: 4,
   difficulty: "easy",
   language: "es",
@@ -233,6 +238,7 @@ const prepareForm = () => {
     title: recipe.title,
     summary: recipe.summary,
     cookMinutes: recipe.cookMinutes,
+    timerEnabled: recipe.timerEnabled !== false,
     servings: recipe.servings,
     difficulty: recipe.difficulty || "easy",
     language: recipe.language || "es",
@@ -247,6 +253,7 @@ const prepareForm = () => {
     title: "",
     summary: "",
     cookMinutes: 35,
+    timerEnabled: true,
     servings: 4,
     difficulty: "easy",
     language: document.documentElement.lang || "es",
@@ -277,11 +284,13 @@ watch(() => [props.open, props.recipe?.id], ([open]) => {
   ["servings", () => form.servings],
   ["ingredients", () => form.ingredients],
   ["steps", () => form.steps],
+  ["poll", () => `${form.pollQuestion}\n${form.pollOptions}`],
   ["editNote", () => form.editNote],
 ].forEach(([field, source]) => {
   watch(source, () => {
     fieldErrors[field] = "";
     error.value = "";
+    emit("clear-error");
   });
 });
 
@@ -308,8 +317,11 @@ const submit = async () => {
   const firstInvalid = [
     ["title", titleInput],
     ["summary", summaryInput],
+    ["cookMinutes", cookMinutesInput],
+    ["servings", servingsInput],
     ["ingredients", ingredientsInput],
     ["steps", stepsInput],
+    ["poll", pollQuestionInput],
     ["editNote", editNoteInput],
   ].find(([field]) => fieldErrors[field]);
 
@@ -366,11 +378,16 @@ const submit = async () => {
             <span class="font-normal text-charcoal/55">Separalos con espacios o comas. Después se pueden tocar para descubrir recetas parecidas.</span>
           </label>
           <div class="grid gap-5 sm:grid-cols-2">
-            <label class="field-label">Minutos<input v-model.number="form.cookMinutes" type="number" min="1" max="1440" class="field-input" :class="fieldErrors.cookMinutes && 'field-input--error'" /><span v-if="fieldErrors.cookMinutes" class="field-error">{{ fieldErrors.cookMinutes }}</span></label>
-            <label class="field-label">Porciones<input v-model.number="form.servings" type="number" min="1" max="24" class="field-input" :class="fieldErrors.servings && 'field-input--error'" /><span v-if="fieldErrors.servings" class="field-error">{{ fieldErrors.servings }}</span></label>
+            <label class="field-label">Tiempo estimado (minutos)<input ref="cookMinutesInput" v-model.number="form.cookMinutes" type="number" min="1" max="1440" class="field-input" :class="fieldErrors.cookMinutes && 'field-input--error'" :aria-invalid="Boolean(fieldErrors.cookMinutes)" /><span v-if="fieldErrors.cookMinutes" class="field-error">{{ fieldErrors.cookMinutes }}</span></label>
+            <label class="field-label">Porciones<input ref="servingsInput" v-model.number="form.servings" type="number" min="1" max="24" class="field-input" :class="fieldErrors.servings && 'field-input--error'" :aria-invalid="Boolean(fieldErrors.servings)" /><span v-if="fieldErrors.servings" class="field-error">{{ fieldErrors.servings }}</span></label>
             <label class="field-label">Dificultad<select v-model="form.difficulty" class="field-input"><option value="easy">Fácil</option><option value="medium">Intermedia</option><option value="hard">Desafiante</option></select></label>
             <label class="field-label">Idioma de la receta<select v-model="form.language" class="field-input"><option value="es">Español</option><option value="en">English</option><option value="pt">Português</option></select></label>
           </div>
+
+          <label class="flex cursor-pointer items-start gap-4 border-2 border-charcoal bg-cream p-4 sm:p-5">
+            <input v-model="form.timerEnabled" type="checkbox" class="mt-0.5 size-6 shrink-0 accent-[#999e76]" />
+            <span><span class="block font-bold text-charcoal">Incluir temporizador al cocinar</span><span class="mt-1 block text-sm font-normal leading-relaxed text-charcoal/60">Es opcional. El tiempo estimado seguirá apareciendo en la receta, pero el modo paso a paso no mostrará reloj si lo desactivás.</span></span>
+          </label>
 
           <div class="field-label">
             Foto y/o video <span class="font-normal text-charcoal/55">Opcionales · podés agregar ambos · video de hasta 35 segundos</span>
@@ -429,7 +446,7 @@ const submit = async () => {
           <section v-if="!recipe" class="border-2 border-charcoal bg-cream p-4 sm:p-5">
             <p class="text-xs font-bold uppercase tracking-[0.16em] text-olive-dark">Opcional</p>
             <h3 class="mt-1 font-display text-2xl font-bold">Sumá una encuesta.</h3>
-            <div class="mt-4 grid gap-4"><label class="field-label">Pregunta<input v-model="form.pollQuestion" maxlength="140" class="field-input" placeholder="¿Con qué acompañarías esta receta?" /></label><label class="field-label">Opciones, una por línea<textarea v-model="form.pollOptions" maxlength="244" class="field-input min-h-28 resize-y" placeholder="Ensalada\nPapas al horno\nArroz" /></label><span v-if="fieldErrors.poll" class="field-error">{{ fieldErrors.poll }}</span><p class="text-sm text-charcoal/55">Entre 2 y 4 opciones. Cada persona puede votar una vez y cambiar su elección.</p></div>
+            <div class="mt-4 grid gap-4"><label class="field-label">Pregunta<input ref="pollQuestionInput" v-model="form.pollQuestion" maxlength="140" class="field-input" :class="fieldErrors.poll && 'field-input--error'" :aria-invalid="Boolean(fieldErrors.poll)" placeholder="¿Con qué acompañarías esta receta?" /></label><label class="field-label">Opciones, una por línea<textarea v-model="form.pollOptions" maxlength="244" class="field-input min-h-28 resize-y" :class="fieldErrors.poll && 'field-input--error'" :aria-invalid="Boolean(fieldErrors.poll)" placeholder="Ensalada\nPapas al horno\nArroz" /></label><span v-if="fieldErrors.poll" class="field-error">{{ fieldErrors.poll }}</span><p class="text-sm text-charcoal/55">Entre 2 y 4 opciones. Cada persona puede votar una vez y cambiar su elección.</p></div>
           </section>
 
           <label v-if="recipe" class="field-label">
@@ -439,7 +456,7 @@ const submit = async () => {
             <span class="font-normal text-charcoal/55">Esta nota quedará visible en el historial de la receta.</span>
           </label>
 
-          <p v-if="error" class="bg-blush px-4 py-3 text-sm font-semibold text-charcoal" role="alert">{{ error }}</p>
+          <p v-if="error || submitError" class="border-l-4 border-charcoal bg-blush px-4 py-3 text-sm font-semibold text-charcoal" role="alert" aria-live="assertive">{{ error || submitError }}</p>
           <button type="submit" class="focus-ring mt-2 inline-flex min-h-14 items-center justify-between bg-charcoal px-6 font-semibold text-porcelain hover:bg-olive hover:text-charcoal" :disabled="busy">
             {{ busy ? (recipe ? "Guardando…" : "Publicando…") : (recipe ? "Guardar cambios" : "Publicar receta") }}
             <PhArrowRight :size="22" aria-hidden="true" />

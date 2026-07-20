@@ -1,0 +1,1 @@
+ALTER TABLE recipes ADD COLUMN timer_enabled INTEGER NOT NULL DEFAULT 1;

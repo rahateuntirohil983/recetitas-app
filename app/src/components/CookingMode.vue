@@ -91,7 +91,7 @@ onBeforeUnmount(() => { window.clearInterval(interval); document.removeEventList
         </aside>
 
         <main class="flex min-w-0 flex-col px-5 py-6 sm:px-10 sm:py-9">
-          <section class="overflow-hidden border-2 border-charcoal bg-cream">
+          <section v-if="recipe.timerEnabled !== false" class="overflow-hidden border-2 border-charcoal bg-cream">
             <div class="flex min-w-0 items-end justify-between gap-3 bg-blush px-4 py-4 sm:px-5">
               <div class="min-w-0"><p class="flex items-center gap-2 text-[0.7rem] font-bold uppercase tracking-[0.17em] text-olive-dark"><PhTimer :size="17" /> Temporizador</p><p class="mt-1 font-display text-[clamp(2.7rem,14vw,4.4rem)] font-bold tabular-nums leading-none tracking-[-0.04em]" :class="timerDone && 'text-[#9f2638]'">{{ format }}</p></div>
               <p v-if="timerDone" class="max-w-36 border-l-2 border-charcoal pl-3 text-sm font-semibold leading-snug">¡Tiempo! Revisá la cocción.</p>

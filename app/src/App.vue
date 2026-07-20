@@ -50,9 +50,11 @@ const text = (key) => t(preferences.value.language, key);
 const loginOpen = ref(false);
 const composerOpen = ref(false);
 const composerKey = ref(0);
+const composerError = ref("");
 const editorOpen = ref(false);
 const editorKey = ref(0);
 const editingRecipe = ref(null);
+const editorError = ref("");
 const commentsOpen = ref(false);
 const selectedRecipe = ref(null);
 const recipeLoading = ref(false);
@@ -177,6 +179,7 @@ const startPublishing = () => {
     loginOpen.value = true;
     return;
   }
+  composerError.value = "";
   composerOpen.value = true;
 };
 
@@ -500,6 +503,7 @@ const startEditingRecipe = (recipe) => {
   }
   if (recipe.author.id !== session.value.user.id) return;
   editingRecipe.value = recipe;
+  editorError.value = "";
   editorKey.value += 1;
   editorOpen.value = true;
 };
@@ -514,6 +518,7 @@ const uploadRecipeMedia = async (payload) => {
 const saveRecipeEdit = async (payload) => {
   if (!editingRecipe.value) return;
   busy.value = true;
+  editorError.value = "";
   try {
     const recipePayload = await uploadRecipeMedia(payload);
     const response = await api.updateRecipe(editingRecipe.value.id, recipePayload);
@@ -525,6 +530,8 @@ const saveRecipeEdit = async (payload) => {
     if (failure.status === 401) {
       editorOpen.value = false;
       loginOpen.value = true;
+    } else {
+      editorError.value = failure.message;
     }
     flash(failure.message);
   } finally {
@@ -602,6 +609,7 @@ const openNotification = async (notification) => {
 
 const publishRecipe = async (payload) => {
   busy.value = true;
+  composerError.value = "";
   try {
     const recipePayload = await uploadRecipeMedia(payload);
     const response = await api.createRecipe(recipePayload);
@@ -615,6 +623,8 @@ const publishRecipe = async (payload) => {
     if (failure.status === 401) {
       composerOpen.value = false;
       loginOpen.value = true;
+    } else {
+      composerError.value = failure.message;
     }
     flash(failure.message);
   } finally {
@@ -851,8 +861,8 @@ onMounted(async () => {
     <p v-if="toast" class="fixed bottom-24 left-1/2 z-[70] -translate-x-1/2 bg-charcoal px-5 py-3 text-center text-sm font-semibold text-porcelain shadow-xl lg:bottom-8" role="status" aria-live="polite">{{ toast }}</p>
 
     <LoginPanel v-if="loginOpen" :open="loginOpen" :busy="busy" :error-message="authError" @close="loginOpen = false" @submit="authenticate" />
-    <ComposerModal v-if="composerOpen" :key="composerKey" :open="composerOpen" :busy="busy" @close="composerOpen = false" @submit="publishRecipe" />
-    <ComposerModal v-if="editorOpen" :key="`edit-${editorKey}`" :open="editorOpen" :busy="busy" :recipe="editingRecipe" @close="editorOpen = false" @submit="saveRecipeEdit" />
+    <ComposerModal v-if="composerOpen" :key="composerKey" :open="composerOpen" :busy="busy" :submit-error="composerError" @clear-error="composerError = ''" @close="composerOpen = false" @submit="publishRecipe" />
+    <ComposerModal v-if="editorOpen" :key="`edit-${editorKey}`" :open="editorOpen" :busy="busy" :recipe="editingRecipe" :submit-error="editorError" @clear-error="editorError = ''" @close="editorOpen = false" @submit="saveRecipeEdit" />
     <CommentsPanel v-if="commentsOpen" :open="commentsOpen" :recipe="selectedRecipe" :comments="comments" :authenticated="session.authenticated" :viewer-id="session.user?.id || ''" :busy="busy" @close="commentsOpen = false" @login="loginOpen = true" @submit="addComment" @delete="deleteComment" />
     <EditProfileModal v-if="editProfileOpen" :open="editProfileOpen" :profile="profile" :busy="busy" :error-message="editProfileError" @close="editProfileOpen = false" @submit="saveProfile" />
     <ConnectionsPanel v-if="connectionsOpen" :open="connectionsOpen" :type="connectionsType" :people="connectionsPeople" :loading="connectionsLoading" @close="connectionsOpen = false" @profile="connectionsOpen = false; openProfile($event)" />

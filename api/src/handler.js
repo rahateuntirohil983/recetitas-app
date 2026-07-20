@@ -42,6 +42,7 @@ const SCHEMA_STATEMENTS = [
     edit_count INTEGER NOT NULL DEFAULT 0,
     difficulty TEXT NOT NULL DEFAULT 'easy',
     language TEXT NOT NULL DEFAULT 'es',
+    timer_enabled INTEGER NOT NULL DEFAULT 1,
     cook_minutes INTEGER NOT NULL,
     servings INTEGER NOT NULL,
     ingredients_json TEXT NOT NULL,
@@ -548,6 +549,7 @@ const recipeDto = (row) => {
     lastEditNote: row.last_edit_note || "",
     difficulty: RECIPE_DIFFICULTIES.has(row.difficulty) ? row.difficulty : "easy",
     language: RECIPE_LANGUAGES.has(row.language) ? row.language : "es",
+    timerEnabled: row.timer_enabled == null ? true : Boolean(row.timer_enabled),
     cookMinutes: Number(row.cook_minutes),
     servings: Number(row.servings),
     ingredients: parseJsonArray(row.ingredients_json),
@@ -600,6 +602,9 @@ const ensureRecipeColumns = async (db) => {
       }
       if (!(columns.results || []).some((column) => column.name === "language")) {
         await db.prepare("ALTER TABLE recipes ADD COLUMN language TEXT NOT NULL DEFAULT 'es'").run();
+      }
+      if (!(columns.results || []).some((column) => column.name === "timer_enabled")) {
+        await db.prepare("ALTER TABLE recipes ADD COLUMN timer_enabled INTEGER NOT NULL DEFAULT 1").run();
       }
       const commentColumns = await db.prepare("PRAGMA table_info(comments)").all();
       if (!(commentColumns.results || []).some((column) => column.name === "image_url")) {
@@ -1221,6 +1226,7 @@ const validateRecipe = (body, mediaBaseUrl = "") => {
   const servings = Number(body.servings);
   const difficulty = RECIPE_DIFFICULTIES.has(body.difficulty) ? body.difficulty : "easy";
   const language = RECIPE_LANGUAGES.has(body.language) ? body.language : "es";
+  const timerEnabled = body.timerEnabled !== false;
   const poll = validateRecipePoll(body.poll);
   const imageKey = IMAGE_KEYS.has(body.imageKey) ? body.imageKey : "pumpkin";
   const rawImageUrl = cleanText(body.imageUrl, 500);
@@ -1252,7 +1258,7 @@ const validateRecipe = (body, mediaBaseUrl = "") => {
     return { error: "La cantidad de porciones no es válida." };
   }
 
-  return { title, summary, ingredients, steps, tags, cookMinutes, servings, difficulty, language, imageKey, imageUrl, videoUrl, poll };
+  return { title, summary, ingredients, steps, tags, cookMinutes, servings, difficulty, language, timerEnabled, imageKey, imageUrl, videoUrl, poll };
 };
 
 export async function handleApiRequest(request, env) {
@@ -2473,8 +2479,8 @@ export async function handleApiRequest(request, env) {
       const createdAt = now();
       const recipeInsert = env.DB.prepare(`INSERT INTO recipes (
           id, author_id, title, summary, image_key, image_url, video_url, cook_minutes,
-          servings, difficulty, language, ingredients_json, steps_json, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          servings, difficulty, language, timer_enabled, ingredients_json, steps_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .bind(
           recipeId,
           auth.user.id,
@@ -2487,6 +2493,7 @@ export async function handleApiRequest(request, env) {
           recipe.servings,
           recipe.difficulty,
           recipe.language,
+          recipe.timerEnabled ? 1 : 0,
           JSON.stringify(recipe.ingredients),
           JSON.stringify(recipe.steps),
           createdAt,
@@ -2565,7 +2572,7 @@ export async function handleApiRequest(request, env) {
         const statements = [
           env.DB.prepare(`UPDATE recipes SET
               title = ?, summary = ?, image_key = ?, image_url = ?, video_url = ?, cook_minutes = ?,
-              servings = ?, difficulty = ?, language = ?, ingredients_json = ?, steps_json = ?, updated_at = ?, edit_count = edit_count + 1
+              servings = ?, difficulty = ?, language = ?, timer_enabled = ?, ingredients_json = ?, steps_json = ?, updated_at = ?, edit_count = edit_count + 1
             WHERE id = ? AND author_id = ?`)
             .bind(
               updatedRecipe.title,
@@ -2577,6 +2584,7 @@ export async function handleApiRequest(request, env) {
               updatedRecipe.servings,
               updatedRecipe.difficulty,
               updatedRecipe.language,
+              updatedRecipe.timerEnabled ? 1 : 0,
               JSON.stringify(updatedRecipe.ingredients),
               JSON.stringify(updatedRecipe.steps),
               updatedAt,
