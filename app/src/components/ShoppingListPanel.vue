@@ -43,10 +43,10 @@ onBeforeUnmount(() => { document.removeEventListener("keydown", escape); documen
         </header>
         <div class="flex-1 overflow-y-auto px-5 py-6 sm:px-8">
           <div class="mb-5 flex items-center justify-between gap-3"><p class="font-semibold">{{ remaining }} por comprar</p><button v-if="checked.size" type="button" class="text-sm font-semibold underline" @click="checked = new Set(); persist()">Desmarcar todo</button></div>
-          <ul class="grid gap-3">
-            <li v-for="(ingredient, index) in recipe.ingredients" :key="`${index}-${ingredient}`">
-              <label class="focus-within:ring-4 focus-within:ring-blush flex min-h-14 cursor-pointer items-center gap-4 border-2 border-charcoal px-4 py-3 transition" :class="checked.has(index) ? 'bg-cream text-charcoal/45 line-through' : 'bg-porcelain hover:bg-blush'">
-                <input type="checkbox" class="sr-only" :checked="checked.has(index)" @change="toggle(index)" /><span class="grid size-7 shrink-0 place-items-center border-2 border-charcoal" :class="checked.has(index) && 'bg-charcoal text-porcelain'"><PhCheck v-if="checked.has(index)" :size="18" weight="bold" /></span><span class="min-w-0 break-words [overflow-wrap:anywhere]">{{ ingredient }}</span>
+          <ul class="grid min-w-0 gap-3 overflow-hidden">
+            <li v-for="(ingredient, index) in recipe.ingredients" :key="`${index}-${ingredient}`" class="min-w-0 max-w-full">
+              <label class="focus-within:ring-4 focus-within:ring-blush flex min-h-14 w-full min-w-0 max-w-full cursor-pointer items-center gap-4 overflow-hidden border-2 border-charcoal px-4 py-3 transition" :class="checked.has(index) ? 'bg-cream text-charcoal/45 line-through' : 'bg-porcelain hover:bg-blush'">
+                <input type="checkbox" class="sr-only" :checked="checked.has(index)" @change="toggle(index)" /><span class="grid size-7 shrink-0 place-items-center border-2 border-charcoal" :class="checked.has(index) && 'bg-charcoal text-porcelain'"><PhCheck v-if="checked.has(index)" :size="18" weight="bold" /></span><span class="block min-w-0 flex-1 whitespace-normal break-all leading-relaxed [overflow-wrap:anywhere] [word-break:break-word]">{{ ingredient }}</span>
               </label>
             </li>
           </ul>

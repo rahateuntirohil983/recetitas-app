@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { PhArrowLeft, PhArrowRight, PhCheck, PhPause, PhPlay, PhPlus, PhTimer, PhX } from "@phosphor-icons/vue";
+import { PhArrowCounterClockwise, PhArrowLeft, PhArrowRight, PhCheck, PhPause, PhPlay, PhPlus, PhTimer, PhX } from "@phosphor-icons/vue";
 
 const props = defineProps({ recipe: { type: Object, required: true } });
 const emit = defineEmits(["close"]);
@@ -91,14 +91,21 @@ onBeforeUnmount(() => { window.clearInterval(interval); document.removeEventList
         </aside>
 
         <main class="flex min-w-0 flex-col px-5 py-6 sm:px-10 sm:py-9">
-          <section class="grid gap-3 border-2 border-charcoal bg-cream p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:p-5">
-            <div><p class="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.16em] text-olive-dark"><PhTimer :size="18" /> Temporizador</p><p class="mt-1 font-display text-[clamp(2.8rem,10vw,4.8rem)] font-bold tabular-nums leading-none" :class="timerDone && 'text-[#b33a4a]'">{{ format }}</p><p v-if="timerDone" class="mt-1 font-bold">¡Tiempo! Revisá la cocción.</p></div>
-            <div class="grid grid-cols-3 gap-2"><button type="button" class="focus-ring grid min-h-12 place-items-center border-2 border-charcoal bg-porcelain px-3" :aria-label="running ? 'Pausar temporizador' : 'Iniciar temporizador'" @click="startPause"><PhPause v-if="running" :size="22" weight="fill" /><PhPlay v-else :size="22" weight="fill" /></button><button type="button" class="focus-ring inline-flex min-h-12 items-center justify-center gap-1 border-2 border-charcoal bg-porcelain px-3 font-bold" @click="addMinute"><PhPlus :size="18" />1 min</button><button type="button" class="focus-ring min-h-12 border-2 border-charcoal bg-porcelain px-3 text-sm font-bold" @click="resetTimer">Reiniciar</button></div>
+          <section class="overflow-hidden border-2 border-charcoal bg-cream">
+            <div class="flex min-w-0 items-end justify-between gap-3 bg-blush px-4 py-4 sm:px-5">
+              <div class="min-w-0"><p class="flex items-center gap-2 text-[0.7rem] font-bold uppercase tracking-[0.17em] text-olive-dark"><PhTimer :size="17" /> Temporizador</p><p class="mt-1 font-display text-[clamp(2.7rem,14vw,4.4rem)] font-bold tabular-nums leading-none tracking-[-0.04em]" :class="timerDone && 'text-[#9f2638]'">{{ format }}</p></div>
+              <p v-if="timerDone" class="max-w-36 border-l-2 border-charcoal pl-3 text-sm font-semibold leading-snug">¡Tiempo! Revisá la cocción.</p>
+            </div>
+            <div class="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-2 p-3 sm:p-4">
+              <button type="button" class="focus-ring inline-flex min-h-12 min-w-0 items-center justify-center gap-2 bg-charcoal px-4 font-semibold text-porcelain hover:bg-olive hover:text-charcoal" :aria-label="running ? 'Pausar temporizador' : 'Iniciar temporizador'" @click="startPause"><PhPause v-if="running" :size="21" weight="fill" /><PhPlay v-else :size="21" weight="fill" /><span>{{ running ? 'Pausar' : 'Iniciar' }}</span></button>
+              <button type="button" class="focus-ring inline-flex min-h-12 items-center justify-center gap-1 border-2 border-charcoal bg-olive px-3 font-semibold" aria-label="Agregar un minuto" @click="addMinute"><PhPlus :size="18" />1 min</button>
+              <button type="button" class="focus-ring grid size-12 place-items-center border-2 border-charcoal bg-porcelain" aria-label="Reiniciar temporizador" title="Reiniciar" @click="resetTimer"><PhArrowCounterClockwise :size="21" /></button>
+            </div>
           </section>
 
           <section class="flex flex-1 flex-col justify-center py-10 sm:py-14">
             <p class="text-sm font-bold uppercase tracking-[0.18em] text-olive-dark">Paso {{ current + 1 }} de {{ recipe.steps.length }}</p>
-            <div class="mt-3 grid grid-cols-[3.2rem_minmax(0,1fr)] gap-4 sm:grid-cols-[4.5rem_minmax(0,1fr)] sm:gap-7"><span class="grid size-13 place-items-center bg-charcoal font-display text-2xl font-bold text-porcelain sm:size-18 sm:text-4xl">{{ current + 1 }}</span><p class="min-w-0 break-words [overflow-wrap:anywhere] font-display text-[clamp(2rem,6vw,4rem)] font-bold leading-[1.12] tracking-[-0.035em]">{{ recipe.steps[current] }}</p></div>
+            <div class="mt-3 grid grid-cols-[3.2rem_minmax(0,1fr)] gap-4 sm:grid-cols-[4.5rem_minmax(0,1fr)] sm:gap-7"><span class="grid size-13 place-items-center bg-charcoal font-display text-2xl font-bold text-porcelain sm:size-18 sm:text-4xl">{{ current + 1 }}</span><p class="min-w-0 whitespace-normal break-all font-sans text-[clamp(1.2rem,5vw,1.75rem)] font-normal leading-[1.55] tracking-normal [overflow-wrap:anywhere]">{{ recipe.steps[current] }}</p></div>
             <button type="button" class="focus-ring mt-8 inline-flex min-h-14 w-full items-center justify-center gap-2 border-2 border-charcoal px-5 font-bold sm:w-auto sm:self-start" :class="completed.has(current) ? 'bg-olive' : 'bg-blush'" @click="markAndNext"><PhCheck :size="22" weight="bold" /> {{ completed.has(current) ? 'Marcar pendiente' : current === recipe.steps.length - 1 ? 'Marcar como listo' : 'Listo, siguiente paso' }}</button>
           </section>
 
