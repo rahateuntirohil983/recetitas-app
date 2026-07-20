@@ -6,6 +6,8 @@ const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
 const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const ALLOWED_VIDEO_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime"]);
+const RECIPE_DIFFICULTIES = new Set(["easy", "medium", "hard"]);
+const RECIPE_LANGUAGES = new Set(["es", "en", "pt"]);
 const LIVE_ACTIVE_WINDOW_MS = 45_000;
 const LIVE_VIEWER_WINDOW_MS = 25_000;
 const LIVE_RESUME_WINDOW_MS = 10 * 60_000;
@@ -38,6 +40,8 @@ const SCHEMA_STATEMENTS = [
     video_url TEXT,
     updated_at TEXT,
     edit_count INTEGER NOT NULL DEFAULT 0,
+    difficulty TEXT NOT NULL DEFAULT 'easy',
+    language TEXT NOT NULL DEFAULT 'es',
     cook_minutes INTEGER NOT NULL,
     servings INTEGER NOT NULL,
     ingredients_json TEXT NOT NULL,
@@ -61,6 +65,7 @@ const SCHEMA_STATEMENTS = [
     recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
     author_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     body TEXT NOT NULL,
+    image_url TEXT,
     created_at TEXT NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS recipe_tags (
@@ -75,6 +80,39 @@ const SCHEMA_STATEMENTS = [
     author_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     note TEXT NOT NULL,
     created_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS recipe_polls (
+    id TEXT PRIMARY KEY,
+    recipe_id TEXT NOT NULL UNIQUE REFERENCES recipes(id) ON DELETE CASCADE,
+    question TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS recipe_poll_options (
+    id TEXT PRIMARY KEY,
+    poll_id TEXT NOT NULL REFERENCES recipe_polls(id) ON DELETE CASCADE,
+    label TEXT NOT NULL,
+    position INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS recipe_poll_votes (
+    poll_id TEXT NOT NULL REFERENCES recipe_polls(id) ON DELETE CASCADE,
+    option_id TEXT NOT NULL REFERENCES recipe_poll_options(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (poll_id, user_id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS recipe_collections (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS recipe_collection_items (
+    collection_id TEXT NOT NULL REFERENCES recipe_collections(id) ON DELETE CASCADE,
+    recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+    added_at TEXT NOT NULL,
+    PRIMARY KEY (collection_id, recipe_id)
   )`,
   `CREATE TABLE IF NOT EXISTS notifications (
     id TEXT PRIMARY KEY,
@@ -211,6 +249,10 @@ const SCHEMA_STATEMENTS = [
   "CREATE INDEX IF NOT EXISTS comments_recipe_id_idx ON comments(recipe_id, created_at)",
   "CREATE INDEX IF NOT EXISTS recipe_tags_tag_idx ON recipe_tags(tag, created_at DESC)",
   "CREATE INDEX IF NOT EXISTS recipe_edits_recipe_idx ON recipe_edits(recipe_id, created_at DESC)",
+  "CREATE INDEX IF NOT EXISTS recipe_poll_options_poll_idx ON recipe_poll_options(poll_id, position)",
+  "CREATE INDEX IF NOT EXISTS recipe_poll_votes_option_idx ON recipe_poll_votes(option_id)",
+  "CREATE INDEX IF NOT EXISTS recipe_collections_user_idx ON recipe_collections(user_id, updated_at DESC)",
+  "CREATE INDEX IF NOT EXISTS recipe_collection_items_recipe_idx ON recipe_collection_items(recipe_id)",
   "CREATE INDEX IF NOT EXISTS notifications_user_idx ON notifications(user_id, read_at, created_at DESC)",
   "CREATE UNIQUE INDEX IF NOT EXISTS live_streams_one_active_user_idx ON live_streams(user_id) WHERE status = 'live'",
   "CREATE INDEX IF NOT EXISTS live_streams_status_seen_idx ON live_streams(status, last_seen_at DESC)",
@@ -277,6 +319,50 @@ const cleanTags = (values) => [...new Set((Array.isArray(values) ? values : [])
   .map(normalizeTag)
   .filter((tag) => tag.length >= 2))]
   .slice(0, 5);
+
+const normalizePantryText = (value) => String(value ?? "")
+  .normalize("NFKD")
+  .replace(/[\u0300-\u036f]/g, "")
+  .toLowerCase()
+  .replace(/[^a-z0-9\s]/g, " ")
+  .replace(/\s+/g, " ")
+  .trim();
+
+const parsePantryInput = (value) => {
+  const normalized = cleanText(value, 240)
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s,;+]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^(?:yo\s+)?(?:tengo|hay|me\s+queda(?:n)?|cuento\s+con|dispongo\s+de)\s+/, "")
+    .replace(/\b(?:en\s+casa|en\s+la\s+heladera|en\s+la\s+despensa)\b/g, "");
+  return [...new Set(normalized
+    .split(/\s*(?:,|;|\+|\by\b|\be\b)\s*/)
+    .map((item) => item
+      .replace(/^(?:con|de|del|la|las|el|los|un|una|unos|unas)\s+/, "")
+      .replace(/\s+(?:y\s+)?(?:nada\s+mas|solamente|nomás)$/g, "")
+      .trim())
+    .filter((item) => item.length >= 2))]
+    .slice(0, 20);
+};
+
+const scoreRecipeByPantry = (recipe, pantry) => {
+  const normalizedIngredients = (recipe.ingredients || []).map(normalizePantryText);
+  const matchedPantry = pantry.filter((item) => normalizedIngredients.some((ingredient) => (
+    ingredient.includes(item) || item.includes(ingredient)
+  )));
+  const missingIngredients = (recipe.ingredients || []).filter((ingredient, index) => !pantry.some((item) => (
+    normalizedIngredients[index].includes(item) || item.includes(normalizedIngredients[index])
+  )));
+  return {
+    matchedPantry,
+    missingIngredients,
+    matchPercent: pantry.length ? Math.round((matchedPantry.length / pantry.length) * 100) : 0,
+    canMake: missingIngredients.length === 0,
+  };
+};
 
 const parseJsonArray = (value) => {
   try {
@@ -460,6 +546,8 @@ const recipeDto = (row) => {
     updatedAt: row.updated_at || null,
     editCount: Number(row.edit_count || 0),
     lastEditNote: row.last_edit_note || "",
+    difficulty: RECIPE_DIFFICULTIES.has(row.difficulty) ? row.difficulty : "easy",
+    language: RECIPE_LANGUAGES.has(row.language) ? row.language : "es",
     cookMinutes: Number(row.cook_minutes),
     servings: Number(row.servings),
     ingredients: parseJsonArray(row.ingredients_json),
@@ -506,6 +594,16 @@ const ensureRecipeColumns = async (db) => {
       }
       if (!(columns.results || []).some((column) => column.name === "edit_count")) {
         await db.prepare("ALTER TABLE recipes ADD COLUMN edit_count INTEGER NOT NULL DEFAULT 0").run();
+      }
+      if (!(columns.results || []).some((column) => column.name === "difficulty")) {
+        await db.prepare("ALTER TABLE recipes ADD COLUMN difficulty TEXT NOT NULL DEFAULT 'easy'").run();
+      }
+      if (!(columns.results || []).some((column) => column.name === "language")) {
+        await db.prepare("ALTER TABLE recipes ADD COLUMN language TEXT NOT NULL DEFAULT 'es'").run();
+      }
+      const commentColumns = await db.prepare("PRAGMA table_info(comments)").all();
+      if (!(commentColumns.results || []).some((column) => column.name === "image_url")) {
+        await db.prepare("ALTER TABLE comments ADD COLUMN image_url TEXT").run();
       }
     })().catch((cause) => {
       recipeColumnsReady = null;
@@ -772,7 +870,7 @@ const requireUser = async (request, db) => {
   return { user };
 };
 
-const getFeed = async (db, viewerId = "", limit = 20, authorId = null, tag = null) => {
+const getFeed = async (db, viewerId = "", limit = 20, authorId = null, tag = null, language = null) => {
   const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 40);
   const conditions = [];
   const filters = [];
@@ -783,6 +881,10 @@ const getFeed = async (db, viewerId = "", limit = 20, authorId = null, tag = nul
   if (tag) {
     conditions.push("EXISTS(SELECT 1 FROM recipe_tags ft WHERE ft.recipe_id = r.id AND ft.tag = ?)");
     filters.push(tag);
+  }
+  if (language && RECIPE_LANGUAGES.has(language)) {
+    conditions.push("r.language = ?");
+    filters.push(language);
   }
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   const bindings = [viewerId, viewerId, viewerId, ...filters, safeLimit];
@@ -827,8 +929,80 @@ const getRecipe = async (db, recipeId, viewerId = "") => {
     WHERE r.id = ?`)
     .bind(viewerId, viewerId, viewerId, recipeId)
     .first();
-  return row ? recipeDto(row) : null;
+  if (!row) return null;
+  const recipe = recipeDto(row);
+  recipe.poll = await getRecipePoll(db, recipeId, viewerId);
+  return recipe;
 };
+
+async function getRecipePoll(db, recipeId, viewerId = "") {
+  const poll = await db.prepare("SELECT id, question, created_at FROM recipe_polls WHERE recipe_id = ?")
+    .bind(recipeId)
+    .first();
+  if (!poll) return null;
+  const options = await db.prepare(`SELECT o.id, o.label, o.position,
+      (SELECT COUNT(*) FROM recipe_poll_votes v WHERE v.option_id = o.id) AS vote_count,
+      EXISTS(SELECT 1 FROM recipe_poll_votes mv WHERE mv.option_id = o.id AND mv.user_id = ?) AS voted_by_me
+    FROM recipe_poll_options o
+    WHERE o.poll_id = ?
+    ORDER BY o.position ASC`)
+    .bind(viewerId, poll.id)
+    .all();
+  const mapped = (options.results || []).map((row) => ({
+    id: row.id,
+    label: row.label,
+    voteCount: Number(row.vote_count || 0),
+    voted: Boolean(row.voted_by_me),
+  }));
+  return {
+    id: poll.id,
+    question: poll.question,
+    createdAt: poll.created_at,
+    totalVotes: mapped.reduce((total, option) => total + option.voteCount, 0),
+    options: mapped,
+  };
+}
+
+const collectionDto = (row) => ({
+  id: row.id,
+  title: row.title,
+  description: row.description || "",
+  itemCount: Number(row.item_count || 0),
+  coverImageUrl: row.cover_image_url || null,
+  containsRecipe: Boolean(row.contains_recipe),
+  updatedAt: row.updated_at,
+  owner: row.handle ? {
+    id: row.user_id,
+    handle: row.handle,
+    displayName: row.display_name,
+    avatarIndex: avatarIndexForRow({ id: row.user_id, avatar_url: row.avatar_url }),
+  } : undefined,
+});
+
+const getUserCollections = async (db, userId, recipeId = "") => {
+  const result = await db.prepare(`SELECT c.*,
+      (SELECT COUNT(*) FROM recipe_collection_items ci WHERE ci.collection_id = c.id) AS item_count,
+      EXISTS(SELECT 1 FROM recipe_collection_items selected WHERE selected.collection_id = c.id AND selected.recipe_id = ?) AS contains_recipe,
+      (SELECT COALESCE(r.image_url, '') FROM recipe_collection_items ci
+        JOIN recipes r ON r.id = ci.recipe_id
+        WHERE ci.collection_id = c.id AND r.image_url IS NOT NULL
+        ORDER BY ci.added_at DESC LIMIT 1) AS cover_image_url
+    FROM recipe_collections c
+    WHERE c.user_id = ?
+    ORDER BY c.updated_at DESC, c.created_at DESC`)
+    .bind(recipeId, userId)
+    .all();
+  return (result.results || []).map(collectionDto);
+};
+
+const profileAchievements = (counts) => [
+  { id: "first-recipe", title: "Primera recetita", description: "Compartió su primera receta.", unlocked: counts.recipes >= 1, progress: Math.min(counts.recipes, 1), target: 1 },
+  { id: "five-recipes", title: "Cocina en marcha", description: "Compartió 5 recetas.", unlocked: counts.recipes >= 5, progress: Math.min(counts.recipes, 5), target: 5 },
+  { id: "ten-comments", title: "Sobremesa larga", description: "Publicó 10 comentarios.", unlocked: counts.comments >= 10, progress: Math.min(counts.comments, 10), target: 10 },
+  { id: "three-collections", title: "Recetario ordenado", description: "Creó 3 carpetas públicas.", unlocked: counts.collections >= 3, progress: Math.min(counts.collections, 3), target: 3 },
+  { id: "twenty-five-likes", title: "Plato querido", description: "Recibió 25 me gusta en sus recetas.", unlocked: counts.receivedLikes >= 25, progress: Math.min(counts.receivedLikes, 25), target: 25 },
+  { id: "ten-followers", title: "Mesa grande", description: "Llegó a 10 seguidores.", unlocked: counts.followers >= 10, progress: Math.min(counts.followers, 10), target: 10 },
+];
 
 const toggleRelation = async (db, table, userId, recipeId) => {
   const existing = await db.prepare(`SELECT 1 AS found FROM ${table} WHERE user_id = ? AND recipe_id = ?`)
@@ -1021,6 +1195,22 @@ const validateLive = (body) => {
   return { title, description };
 };
 
+const validateRecipePoll = (value) => {
+  if (!value || (!value.question && !value.options?.length)) return null;
+  const question = cleanText(value.question, 140);
+  const rawOptions = cleanLines(value.options, 4, 60);
+  const seen = new Set();
+  const options = rawOptions.filter((option) => {
+    const normalized = normalizePantryText(option);
+    if (!normalized || seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  });
+  if (question.length < 5) return { error: "La pregunta de la encuesta debe tener al menos 5 caracteres." };
+  if (options.length < 2) return { error: "Agregá al menos dos opciones distintas a la encuesta." };
+  return { question, options };
+};
+
 const validateRecipe = (body, mediaBaseUrl = "") => {
   const title = cleanText(body.title, 90);
   const summary = cleanText(body.summary, 280);
@@ -1029,6 +1219,9 @@ const validateRecipe = (body, mediaBaseUrl = "") => {
   const tags = cleanTags(body.tags);
   const cookMinutes = Number(body.cookMinutes);
   const servings = Number(body.servings);
+  const difficulty = RECIPE_DIFFICULTIES.has(body.difficulty) ? body.difficulty : "easy";
+  const language = RECIPE_LANGUAGES.has(body.language) ? body.language : "es";
+  const poll = validateRecipePoll(body.poll);
   const imageKey = IMAGE_KEYS.has(body.imageKey) ? body.imageKey : "pumpkin";
   const rawImageUrl = cleanText(body.imageUrl, 500);
   const rawVideoUrl = cleanText(body.videoUrl, 500);
@@ -1049,6 +1242,7 @@ const validateRecipe = (body, mediaBaseUrl = "") => {
   if (summary.length < 10) return { error: "La historia corta debe tener al menos 10 caracteres." };
   if (ingredients.length === 0) return { error: "Agregá al menos un ingrediente." };
   if (steps.length === 0) return { error: "Agregá al menos un paso." };
+  if (poll?.error) return { error: poll.error };
   if (rawImageUrl && !imageUrl) return { error: "La imagen de la receta no es válida." };
   if (rawVideoUrl && !videoUrl) return { error: "El video de la receta no es válido." };
   if (!Number.isInteger(cookMinutes) || cookMinutes < 1 || cookMinutes > 1440) {
@@ -1058,7 +1252,7 @@ const validateRecipe = (body, mediaBaseUrl = "") => {
     return { error: "La cantidad de porciones no es válida." };
   }
 
-  return { title, summary, ingredients, steps, tags, cookMinutes, servings, imageKey, imageUrl, videoUrl };
+  return { title, summary, ingredients, steps, tags, cookMinutes, servings, difficulty, language, imageKey, imageUrl, videoUrl, poll };
 };
 
 export async function handleApiRequest(request, env) {
@@ -1330,6 +1524,13 @@ export async function handleApiRequest(request, env) {
           if (!deleted.ok) return error(502, "MEDIA_DELETE_FAILED", "No pudimos eliminar uno de los archivos de la publicación.");
         }
       }
+      if (env.MEDIA_UPLOAD_URL && env.MEDIA_UPLOAD_TOKEN) {
+        const commentMedia = await env.DB.prepare("SELECT author_id, image_url FROM comments WHERE recipe_id = ? AND image_url IS NOT NULL")
+          .bind(recipe.id).all();
+        for (const item of commentMedia.results || []) {
+          await fetch(new URL("/delete", env.MEDIA_UPLOAD_URL), { method: "DELETE", headers: { authorization: `Bearer ${env.MEDIA_UPLOAD_TOKEN}`, "x-user-id": item.author_id, "x-file-url": item.image_url } }).catch(() => null);
+        }
+      }
       await env.DB.prepare("DELETE FROM recipes WHERE id = ?").bind(recipe.id).run();
       await auditAdmin(env.DB, auth.user.id, "recipe_deleted", {
         targetUserId: recipe.author_id,
@@ -1342,13 +1543,23 @@ export async function handleApiRequest(request, env) {
     if (request.method === "DELETE" && adminCommentMatch) {
       const auth = await requirePortalUser(request, env.DB, "admin");
       if (auth.response) return auth.response;
-      const comment = await env.DB.prepare(`SELECT c.id, c.author_id, c.body, c.recipe_id, u.handle, r.title AS recipe_title
+      const comment = await env.DB.prepare(`SELECT c.id, c.author_id, c.body, c.image_url, c.recipe_id, u.handle, r.title AS recipe_title
         FROM comments c
         JOIN users u ON u.id = c.author_id
         JOIN recipes r ON r.id = c.recipe_id
         WHERE c.id = ?`)
         .bind(adminCommentMatch[1]).first();
       if (!comment) return error(404, "COMMENT_NOT_FOUND", "No encontramos ese comentario.");
+      if (comment.image_url && env.MEDIA_UPLOAD_URL && env.MEDIA_UPLOAD_TOKEN) {
+        await fetch(new URL("/delete", env.MEDIA_UPLOAD_URL), {
+          method: "DELETE",
+          headers: {
+            authorization: `Bearer ${env.MEDIA_UPLOAD_TOKEN}`,
+            "x-user-id": comment.author_id,
+            "x-file-url": comment.image_url,
+          },
+        }).catch(() => null);
+      }
       await env.DB.prepare("DELETE FROM comments WHERE id = ?").bind(comment.id).run();
       await auditAdmin(env.DB, auth.user.id, "comment_deleted", {
         targetUserId: comment.author_id,
@@ -2036,8 +2247,36 @@ export async function handleApiRequest(request, env) {
       return json({ items: await getFeed(env.DB, viewer?.id || "", url.searchParams.get("limit")) });
     }
 
+    if (request.method === "GET" && path === "/api/recipes/daily") {
+      const language = RECIPE_LANGUAGES.has(url.searchParams.get("language")) ? url.searchParams.get("language") : null;
+      const items = await getFeed(env.DB, viewer?.id || "", 40, null, null, language);
+      const date = now().slice(0, 10);
+      const seed = Number(date.replaceAll("-", ""));
+      return json({ date, recipe: items.length ? items[seed % items.length] : null });
+    }
+
+    if (request.method === "GET" && path === "/api/recipes/by-ingredients") {
+      const query = cleanText(url.searchParams.get("q"), 240);
+      const language = RECIPE_LANGUAGES.has(url.searchParams.get("language")) ? url.searchParams.get("language") : null;
+      const pantry = parsePantryInput(query);
+      if (!pantry.length) return error(422, "PANTRY_REQUIRED", "Contanos qué ingredientes tenés.");
+      const items = await getFeed(env.DB, viewer?.id || "", 40, null, null, language);
+      const matches = items
+        .map((recipe) => ({ recipe, ...scoreRecipeByPantry(recipe, pantry) }))
+        .filter((match) => match.matchedPantry.length)
+        .sort((first, second) => (
+          Number(second.canMake) - Number(first.canMake)
+          || second.matchedPantry.length - first.matchedPantry.length
+          || first.missingIngredients.length - second.missingIngredients.length
+          || second.recipe.likeCount - first.recipe.likeCount
+        ))
+        .slice(0, 12);
+      return json({ query, pantry, items: matches });
+    }
+
     if (request.method === "GET" && path === "/api/discover") {
       const selectedTag = normalizeTag(url.searchParams.get("tag"));
+      const selectedLanguage = RECIPE_LANGUAGES.has(url.searchParams.get("language")) ? url.searchParams.get("language") : "";
       const [tagResult, creatorResult, items, lives] = await Promise.all([
         env.DB.prepare(`SELECT
             rt.tag,
@@ -2063,7 +2302,7 @@ export async function handleApiRequest(request, env) {
           LIMIT 8`)
           .bind(viewer?.id || "", viewer?.id || "", viewer?.id || "")
           .all(),
-        getFeed(env.DB, viewer?.id || "", 30, null, selectedTag || null),
+        getFeed(env.DB, viewer?.id || "", 30, null, selectedTag || null, selectedLanguage || null),
         getDiscoverLiveStreams(env.DB, {
           viewerId: viewer?.id || "",
           liveBaseUrl: env.LIVE_WEBRTC_BASE_URL,
@@ -2072,6 +2311,7 @@ export async function handleApiRequest(request, env) {
 
       return json({
         selectedTag: selectedTag || null,
+        selectedLanguage: selectedLanguage || null,
         tags: (tagResult.results || []).map((row) => ({
           name: row.tag,
           recipeCount: Number(row.recipe_count || 0),
@@ -2108,6 +2348,87 @@ export async function handleApiRequest(request, env) {
         .bind(auth.user.id, auth.user.id, auth.user.id)
         .all();
       return json({ items: (result.results || []).map(recipeDto) });
+    }
+
+    if (request.method === "GET" && path === "/api/collections/mine") {
+      const auth = await requireUser(request, env.DB);
+      if (auth.response) return auth.response;
+      return json({ collections: await getUserCollections(env.DB, auth.user.id, cleanText(url.searchParams.get("recipeId"), 80)) });
+    }
+
+    if (request.method === "POST" && path === "/api/collections") {
+      const auth = await requireUser(request, env.DB);
+      if (auth.response) return auth.response;
+      const body = await readBody(request);
+      const title = cleanText(body.title, 60);
+      const description = cleanText(body.description, 180);
+      if (title.length < 2) return error(422, "INVALID_COLLECTION", "El nombre de la carpeta debe tener al menos 2 caracteres.");
+      const existingCount = await env.DB.prepare("SELECT COUNT(*) AS count FROM recipe_collections WHERE user_id = ?")
+        .bind(auth.user.id)
+        .first();
+      if (Number(existingCount?.count || 0) >= 30) return error(422, "COLLECTION_LIMIT", "Podés crear hasta 30 carpetas.");
+      const collectionId = createId("col");
+      const createdAt = now();
+      await env.DB.prepare("INSERT INTO recipe_collections (id, user_id, title, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+        .bind(collectionId, auth.user.id, title, description, createdAt, createdAt)
+        .run();
+      return json({ collection: collectionDto({ id: collectionId, user_id: auth.user.id, title, description, created_at: createdAt, updated_at: createdAt, item_count: 0 }) }, 201);
+    }
+
+    const collectionRecipeMatch = path.match(/^\/api\/collections\/([^/]+)\/recipes\/([^/]+)$/);
+    if (request.method === "POST" && collectionRecipeMatch) {
+      const auth = await requireUser(request, env.DB);
+      if (auth.response) return auth.response;
+      const [, collectionId, recipeId] = collectionRecipeMatch;
+      const collection = await env.DB.prepare("SELECT id FROM recipe_collections WHERE id = ? AND user_id = ?")
+        .bind(collectionId, auth.user.id)
+        .first();
+      if (!collection) return error(404, "COLLECTION_NOT_FOUND", "No encontramos esa carpeta.");
+      const recipe = await env.DB.prepare("SELECT id FROM recipes WHERE id = ?").bind(recipeId).first();
+      if (!recipe) return error(404, "RECIPE_NOT_FOUND", "No encontramos esa receta.");
+      const existing = await env.DB.prepare("SELECT 1 AS found FROM recipe_collection_items WHERE collection_id = ? AND recipe_id = ?")
+        .bind(collectionId, recipeId)
+        .first();
+      if (existing) {
+        await env.DB.batch([
+          env.DB.prepare("DELETE FROM recipe_collection_items WHERE collection_id = ? AND recipe_id = ?").bind(collectionId, recipeId),
+          env.DB.prepare("UPDATE recipe_collections SET updated_at = ? WHERE id = ?").bind(now(), collectionId),
+        ]);
+        return json({ active: false });
+      }
+      await env.DB.batch([
+        env.DB.prepare("INSERT INTO recipe_collection_items (collection_id, recipe_id, added_at) VALUES (?, ?, ?)").bind(collectionId, recipeId, now()),
+        env.DB.prepare("UPDATE recipe_collections SET updated_at = ? WHERE id = ?").bind(now(), collectionId),
+      ]);
+      return json({ active: true });
+    }
+
+    const collectionMatch = path.match(/^\/api\/collections\/([^/]+)$/);
+    if (request.method === "GET" && collectionMatch) {
+      const collection = await env.DB.prepare(`SELECT c.*, u.handle, u.display_name, u.avatar_url,
+          (SELECT COUNT(*) FROM recipe_collection_items ci WHERE ci.collection_id = c.id) AS item_count
+        FROM recipe_collections c JOIN users u ON u.id = c.user_id WHERE c.id = ?`)
+        .bind(collectionMatch[1])
+        .first();
+      if (!collection) return error(404, "COLLECTION_NOT_FOUND", "No encontramos esa carpeta.");
+      const itemIds = await env.DB.prepare("SELECT recipe_id FROM recipe_collection_items WHERE collection_id = ? ORDER BY added_at DESC LIMIT 60")
+        .bind(collection.id)
+        .all();
+      const recipes = (await Promise.all((itemIds.results || []).map((item) => getRecipe(env.DB, item.recipe_id, viewer?.id || "")))).filter(Boolean);
+      return json({ collection: collectionDto(collection), recipes });
+    }
+
+    if (request.method === "DELETE" && collectionMatch) {
+      const auth = await requireUser(request, env.DB);
+      if (auth.response) return auth.response;
+      const collection = await env.DB.prepare("SELECT id FROM recipe_collections WHERE id = ? AND user_id = ?")
+        .bind(collectionMatch[1], auth.user.id)
+        .first();
+      if (!collection) return error(404, "COLLECTION_NOT_FOUND", "No encontramos esa carpeta.");
+      await env.DB.prepare("DELETE FROM recipe_collections WHERE id = ? AND user_id = ?")
+        .bind(collection.id, auth.user.id)
+        .run();
+      return new Response(null, { status: 204 });
     }
 
     if (["POST", "PATCH"].includes(request.method) && path === "/api/profile") {
@@ -2152,8 +2473,8 @@ export async function handleApiRequest(request, env) {
       const createdAt = now();
       const recipeInsert = env.DB.prepare(`INSERT INTO recipes (
           id, author_id, title, summary, image_key, image_url, video_url, cook_minutes,
-          servings, ingredients_json, steps_json, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          servings, difficulty, language, ingredients_json, steps_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .bind(
           recipeId,
           auth.user.id,
@@ -2164,13 +2485,22 @@ export async function handleApiRequest(request, env) {
           recipe.videoUrl,
           recipe.cookMinutes,
           recipe.servings,
+          recipe.difficulty,
+          recipe.language,
           JSON.stringify(recipe.ingredients),
           JSON.stringify(recipe.steps),
           createdAt,
         );
       const tagInserts = recipe.tags.map((tag) => env.DB.prepare("INSERT INTO recipe_tags (recipe_id, tag, created_at) VALUES (?, ?, ?)")
         .bind(recipeId, tag, createdAt));
-      await env.DB.batch([recipeInsert, ...tagInserts]);
+      const pollId = recipe.poll ? createId("pol") : null;
+      const pollInserts = recipe.poll ? [
+        env.DB.prepare("INSERT INTO recipe_polls (id, recipe_id, question, created_at) VALUES (?, ?, ?, ?)")
+          .bind(pollId, recipeId, recipe.poll.question, createdAt),
+        ...recipe.poll.options.map((option, index) => env.DB.prepare("INSERT INTO recipe_poll_options (id, poll_id, label, position) VALUES (?, ?, ?, ?)")
+          .bind(createId("opt"), pollId, option, index)),
+      ] : [];
+      await env.DB.batch([recipeInsert, ...tagInserts, ...pollInserts]);
 
       return json({ recipe: await getRecipe(env.DB, recipeId, auth.user.id) }, 201);
     }
@@ -2180,18 +2510,28 @@ export async function handleApiRequest(request, env) {
       const auth = await requireUser(request, env.DB);
       if (auth.response) return auth.response;
       const [, recipeId, commentId] = commentMatch;
-      const comment = await env.DB.prepare("SELECT id, recipe_id, author_id FROM comments WHERE id = ? AND recipe_id = ?")
+      const comment = await env.DB.prepare("SELECT id, recipe_id, author_id, image_url FROM comments WHERE id = ? AND recipe_id = ?")
         .bind(commentId, recipeId)
         .first();
       if (!comment) return error(404, "COMMENT_NOT_FOUND", "No encontramos ese comentario.");
       if (!canDeleteOwnedComment(comment, auth.user)) return error(403, "NOT_OWNER", "Solo podés borrar tus comentarios.");
+      if (comment.image_url && env.MEDIA_UPLOAD_URL && env.MEDIA_UPLOAD_TOKEN) {
+        await fetch(new URL("/delete", env.MEDIA_UPLOAD_URL), {
+          method: "DELETE",
+          headers: {
+            authorization: `Bearer ${env.MEDIA_UPLOAD_TOKEN}`,
+            "x-user-id": auth.user.id,
+            "x-file-url": comment.image_url,
+          },
+        }).catch(() => null);
+      }
       await env.DB.prepare("DELETE FROM comments WHERE id = ? AND recipe_id = ? AND author_id = ?")
         .bind(commentId, recipeId, auth.user.id)
         .run();
       return new Response(null, { status: 204 });
     }
 
-    const recipeMatch = path.match(/^\/api\/recipes\/([^/]+)(?:\/(like|save|comments|edits))?$/);
+    const recipeMatch = path.match(/^\/api\/recipes\/([^/]+)(?:\/(like|save|comments|edits|poll))?$/);
     if (recipeMatch) {
       const [, recipeId, action] = recipeMatch;
       const recipe = await getRecipe(env.DB, recipeId, viewer?.id || "");
@@ -2225,7 +2565,7 @@ export async function handleApiRequest(request, env) {
         const statements = [
           env.DB.prepare(`UPDATE recipes SET
               title = ?, summary = ?, image_key = ?, image_url = ?, video_url = ?, cook_minutes = ?,
-              servings = ?, ingredients_json = ?, steps_json = ?, updated_at = ?, edit_count = edit_count + 1
+              servings = ?, difficulty = ?, language = ?, ingredients_json = ?, steps_json = ?, updated_at = ?, edit_count = edit_count + 1
             WHERE id = ? AND author_id = ?`)
             .bind(
               updatedRecipe.title,
@@ -2235,6 +2575,8 @@ export async function handleApiRequest(request, env) {
               updatedRecipe.videoUrl,
               updatedRecipe.cookMinutes,
               updatedRecipe.servings,
+              updatedRecipe.difficulty,
+              updatedRecipe.language,
               JSON.stringify(updatedRecipe.ingredients),
               JSON.stringify(updatedRecipe.steps),
               updatedAt,
@@ -2282,9 +2624,28 @@ export async function handleApiRequest(request, env) {
         return json({ active, recipe: await getRecipe(env.DB, recipeId, auth.user.id) });
       }
 
+      if (request.method === "POST" && action === "poll") {
+        const auth = await requireUser(request, env.DB);
+        if (auth.response) return auth.response;
+        const body = await readBody(request);
+        const optionId = cleanText(body.optionId, 80);
+        const option = await env.DB.prepare(`SELECT o.id, o.poll_id FROM recipe_poll_options o
+          JOIN recipe_polls p ON p.id = o.poll_id
+          WHERE o.id = ? AND p.recipe_id = ?`)
+          .bind(optionId, recipeId)
+          .first();
+        if (!option) return error(422, "INVALID_POLL_OPTION", "Elegí una opción válida.");
+        await env.DB.batch([
+          env.DB.prepare("DELETE FROM recipe_poll_votes WHERE poll_id = ? AND user_id = ?").bind(option.poll_id, auth.user.id),
+          env.DB.prepare("INSERT INTO recipe_poll_votes (poll_id, option_id, user_id, created_at) VALUES (?, ?, ?, ?)")
+            .bind(option.poll_id, option.id, auth.user.id, now()),
+        ]);
+        return json({ poll: await getRecipePoll(env.DB, recipeId, auth.user.id) });
+      }
+
       if (request.method === "GET" && action === "comments") {
         const result = await env.DB.prepare(`SELECT
-            c.id, c.body, c.created_at, u.id AS author_id, u.handle,
+            c.id, c.body, c.image_url, c.created_at, u.id AS author_id, u.handle,
             u.display_name, u.avatar_url
           FROM comments c
           JOIN users u ON u.id = c.author_id
@@ -2296,6 +2657,7 @@ export async function handleApiRequest(request, env) {
         return json({ comments: (result.results || []).map((row) => ({
           id: row.id,
           body: row.body,
+          imageUrl: row.image_url || null,
           createdAt: row.created_at,
           author: {
             id: row.author_id,
@@ -2312,17 +2674,26 @@ export async function handleApiRequest(request, env) {
         if (auth.response) return auth.response;
         const body = await readBody(request);
         const comment = cleanText(body.body, 500);
-        if (!comment) return error(422, "INVALID_COMMENT", "Escribí un comentario antes de publicar.");
+        const rawImageUrl = cleanText(body.imageUrl, 500);
+        const mediaBaseUrl = env.MEDIA_UPLOAD_URL ? new URL(env.MEDIA_UPLOAD_URL).origin.replace(/\/$/, "") : "";
+        const imageUrl = rawImageUrl
+          && /^https:\/\//i.test(rawImageUrl)
+          && (!mediaBaseUrl || rawImageUrl.startsWith(`${mediaBaseUrl}/files/`))
+          ? rawImageUrl
+          : null;
+        if (rawImageUrl && !imageUrl) return error(422, "INVALID_COMMENT_IMAGE", "La foto del comentario no es válida.");
+        if (!comment && !imageUrl) return error(422, "INVALID_COMMENT", "Escribí algo o agregá una foto antes de publicar.");
         const commentId = createId("cmt");
         const createdAt = now();
-        await env.DB.prepare("INSERT INTO comments (id, recipe_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)")
-          .bind(commentId, recipeId, auth.user.id, comment, createdAt)
+        await env.DB.prepare("INSERT INTO comments (id, recipe_id, author_id, body, image_url, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+          .bind(commentId, recipeId, auth.user.id, comment, imageUrl, createdAt)
           .run();
         await createNotification(env.DB, { userId: recipe.author.id, actorId: auth.user.id, type: "comment", recipeId, commentId });
         return json({
           comment: {
             id: commentId,
             body: comment,
+            imageUrl,
             createdAt,
             author: userDto(auth.user, { includeEmail: false }),
           },
@@ -2345,6 +2716,13 @@ export async function handleApiRequest(request, env) {
               },
             });
             if (!deleted.ok) return error(502, "MEDIA_DELETE_FAILED", "No pudimos eliminar uno de los archivos. Probá nuevamente.");
+          }
+        }
+        if (env.MEDIA_UPLOAD_URL && env.MEDIA_UPLOAD_TOKEN) {
+          const commentMedia = await env.DB.prepare("SELECT author_id, image_url FROM comments WHERE recipe_id = ? AND image_url IS NOT NULL")
+            .bind(recipeId).all();
+          for (const item of commentMedia.results || []) {
+            await fetch(new URL("/delete", env.MEDIA_UPLOAD_URL), { method: "DELETE", headers: { authorization: `Bearer ${env.MEDIA_UPLOAD_TOKEN}`, "x-user-id": item.author_id, "x-file-url": item.image_url } }).catch(() => null);
           }
         }
         await env.DB.prepare("DELETE FROM recipes WHERE id = ?").bind(recipeId).run();
@@ -2375,6 +2753,9 @@ export async function handleApiRequest(request, env) {
       const profile = await env.DB.prepare(`SELECT
           u.*,
           (SELECT COUNT(*) FROM recipes r WHERE r.author_id = u.id) AS recipe_count,
+          (SELECT COUNT(*) FROM comments c WHERE c.author_id = u.id) AS authored_comment_count,
+          (SELECT COUNT(*) FROM recipe_collections rc WHERE rc.user_id = u.id) AS collection_count,
+          (SELECT COUNT(*) FROM likes l JOIN recipes r ON r.id = l.recipe_id WHERE r.author_id = u.id) AS received_like_count,
           (SELECT COUNT(*) FROM follows f WHERE f.followed_id = u.id) AS follower_count,
           (SELECT COUNT(*) FROM follows f WHERE f.follower_id = u.id) AS following_count,
           EXISTS(SELECT 1 FROM follows mf WHERE mf.followed_id = u.id AND mf.follower_id = ?) AS followed_by_me
@@ -2383,10 +2764,21 @@ export async function handleApiRequest(request, env) {
         .bind(viewer?.id || "", profileMatch[1])
         .first();
       if (!profile) return error(404, "PROFILE_NOT_FOUND", "No encontramos ese perfil.");
-      const activeLive = await getLiveStream(env.DB, {
-        userId: profile.id,
-        viewerId: viewer?.id || "",
-        liveBaseUrl: env.LIVE_WEBRTC_BASE_URL,
+      const [activeLive, collections, recipes] = await Promise.all([
+        getLiveStream(env.DB, {
+          userId: profile.id,
+          viewerId: viewer?.id || "",
+          liveBaseUrl: env.LIVE_WEBRTC_BASE_URL,
+        }),
+        getUserCollections(env.DB, profile.id),
+        getFeed(env.DB, viewer?.id || "", 20, profile.id),
+      ]);
+      const achievements = profileAchievements({
+        recipes: Number(profile.recipe_count || 0),
+        comments: Number(profile.authored_comment_count || 0),
+        collections: Number(profile.collection_count || 0),
+        receivedLikes: Number(profile.received_like_count || 0),
+        followers: Number(profile.follower_count || 0),
       });
       return json({
         profile: {
@@ -2397,8 +2789,10 @@ export async function handleApiRequest(request, env) {
           followed: Boolean(profile.followed_by_me),
           isOwnProfile: profile.id === viewer?.id,
           live: activeLive,
+          collections,
+          achievements,
         },
-        recipes: await getFeed(env.DB, viewer?.id || "", 20, profile.id),
+        recipes,
       });
     }
 
@@ -2444,12 +2838,15 @@ export const __test = {
   cleanLines,
   hashPassword,
   normalizeLiveComment,
+  parsePantryInput,
+  scoreRecipeByPantry,
   avatarIndexForRow,
   hasValidOrigin,
   parseCookies,
   sessionCookie,
   validateLogin,
   validateLive,
+  validateRecipePoll,
   validateRegistration,
   validateRecipe,
   verifyPassword,

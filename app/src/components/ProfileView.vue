@@ -1,5 +1,6 @@
 <script setup>
-import { PhArrowLeft, PhPencilSimple, PhShieldCheck, PhUserPlus, PhVideoCamera } from "@phosphor-icons/vue";
+import { ref } from "vue";
+import { PhArrowLeft, PhFolder, PhPencilSimple, PhPlus, PhShieldCheck, PhTrophy, PhUserPlus, PhVideoCamera } from "@phosphor-icons/vue";
 import PigAvatar from "./PigAvatar.vue";
 import ProfileLive from "./ProfileLive.vue";
 import RecipeCard from "./RecipeCard.vue";
@@ -14,7 +15,17 @@ defineProps({
   authenticated: { type: Boolean, default: false },
 });
 
-defineEmits(["back", "edit", "edit-recipe", "follow", "connections", "open", "tag", "like", "save", "comments", "profile", "delete", "start-live", "live-ended", "login"]);
+const emit = defineEmits(["back", "edit", "edit-recipe", "follow", "connections", "open", "tag", "like", "save", "comments", "profile", "delete", "start-live", "live-ended", "login", "collection", "create-collection"]);
+const creatingCollection = ref(false);
+const collectionTitle = ref("");
+const collectionDescription = ref("");
+const submitCollection = () => {
+  if (collectionTitle.value.trim().length < 2) return;
+  emit("create-collection", { title: collectionTitle.value.trim(), description: collectionDescription.value.trim() });
+  collectionTitle.value = "";
+  collectionDescription.value = "";
+  creatingCollection.value = false;
+};
 </script>
 
 <template>
@@ -78,6 +89,18 @@ defineEmits(["back", "edit", "edit-recipe", "follow", "connections", "open", "ta
         @login="$emit('login')"
         @ended="$emit('live-ended')"
       />
+
+      <section class="mt-10 border-2 border-charcoal bg-cream p-5 sm:p-7">
+        <div class="flex flex-wrap items-end justify-between gap-4"><div><p class="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.17em] text-olive-dark"><PhFolder :size="18" weight="fill" /> Recetarios públicos</p><h2 class="mt-1 font-display text-4xl font-bold tracking-[-0.045em]">Carpetas.</h2></div><button v-if="profile.isOwnProfile" type="button" class="focus-ring inline-flex min-h-11 items-center gap-2 bg-charcoal px-4 font-bold text-porcelain" @click="creatingCollection = !creatingCollection"><PhPlus :size="19" weight="bold" /> Nueva carpeta</button></div>
+        <form v-if="creatingCollection" class="mt-5 grid gap-3 border-2 border-charcoal bg-porcelain p-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto] sm:items-end" @submit.prevent="submitCollection"><label class="field-label">Nombre<input v-model="collectionTitle" maxlength="60" class="field-input" placeholder="Para los domingos" /></label><label class="field-label">Descripción<input v-model="collectionDescription" maxlength="180" class="field-input" placeholder="Recetas para cocinar sin apuro" /></label><button type="submit" class="focus-ring min-h-13 bg-olive px-5 font-bold" :disabled="busy || collectionTitle.trim().length < 2">Crear</button></form>
+        <div v-if="profile.collections?.length" class="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><button v-for="collection in profile.collections" :key="collection.id" type="button" class="focus-ring overflow-hidden border-2 border-charcoal bg-porcelain text-left hover:bg-blush" @click="$emit('collection', collection)"><img v-if="collection.coverImageUrl" :src="collection.coverImageUrl" :alt="collection.title" class="h-28 w-full object-cover" loading="lazy" /><div v-else class="grid h-28 place-items-center bg-olive/45"><PhFolder :size="44" weight="thin" /></div><div class="p-4"><h3 class="break-words font-display text-2xl font-bold leading-tight">{{ collection.title }}</h3><p class="mt-1 text-sm text-charcoal/55">{{ collection.itemCount }} {{ collection.itemCount === 1 ? 'receta' : 'recetas' }}</p></div></button></div>
+        <p v-else class="mt-5 border border-charcoal/15 bg-porcelain px-5 py-7 text-center text-charcoal/55">Todavía no hay carpetas públicas.</p>
+      </section>
+
+      <section v-if="profile.achievements?.length" class="mt-10">
+        <div><p class="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.17em] text-olive-dark"><PhTrophy :size="18" weight="fill" /> Camino recorrido</p><h2 class="mt-1 font-display text-4xl font-bold tracking-[-0.045em]">Logros.</h2></div>
+        <div class="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><article v-for="achievement in profile.achievements" :key="achievement.id" class="border-2 border-charcoal p-4" :class="achievement.unlocked ? 'bg-blush' : 'bg-cream opacity-65'"><div class="flex items-start gap-3"><span class="grid size-10 shrink-0 place-items-center bg-charcoal text-porcelain"><PhTrophy :size="21" :weight="achievement.unlocked ? 'fill' : 'regular'" /></span><div class="min-w-0"><h3 class="font-bold">{{ achievement.title }}</h3><p class="mt-1 text-sm leading-relaxed text-charcoal/65">{{ achievement.description }}</p></div></div><div class="mt-4 h-2 bg-porcelain"><div class="h-full bg-olive-dark" :style="{ width: `${Math.round(achievement.progress / achievement.target * 100)}%` }" /></div><p class="mt-2 text-xs font-semibold text-charcoal/55">{{ achievement.progress }} / {{ achievement.target }}</p></article></div>
+      </section>
 
       <div class="mb-6 mt-10 flex items-end justify-between gap-4">
         <div>

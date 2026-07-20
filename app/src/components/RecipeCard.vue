@@ -21,6 +21,8 @@ defineProps({
   canDelete: { type: Boolean, default: false },
 });
 const emit = defineEmits(["open", "edit", "tag", "like", "save", "comments", "profile", "follow", "delete"]);
+const difficultyLabels = { easy: "Fácil", medium: "Intermedia", hard: "Desafiante" };
+const languageLabels = { es: "ES", en: "EN", pt: "PT" };
 
 const openCard = (event, recipe) => {
   if (event.target !== event.currentTarget && event.target.closest("button, a, input, textarea, select")) return;
@@ -65,6 +67,8 @@ const openCard = (event, recipe) => {
           <span class="inline-flex items-center gap-1.5 bg-olive px-3 py-2 text-sm font-semibold text-charcoal">
             <PhUsers :size="17" aria-hidden="true" /> {{ recipe.servings }}
           </span>
+          <span class="inline-flex items-center gap-1.5 border border-charcoal/20 px-3 py-2 text-sm font-semibold text-charcoal">{{ difficultyLabels[recipe.difficulty] || difficultyLabels.easy }}</span>
+          <span class="inline-flex items-center border border-charcoal/20 px-2.5 py-2 text-xs font-bold text-charcoal">{{ languageLabels[recipe.language] || 'ES' }}</span>
         </div>
         <button type="button" class="focus-ring inline-flex min-h-10 shrink-0 items-center gap-1 px-2 text-sm font-bold text-olive-dark hover:bg-cream" :aria-label="`Abrir la receta ${recipe.title}`" @click="$emit('open', recipe)">
           <span class="hidden sm:inline">Ver receta</span><PhArrowRight :size="19" aria-hidden="true" />

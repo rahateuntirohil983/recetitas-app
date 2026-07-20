@@ -4,6 +4,9 @@ import { PhHash, PhMagnifyingGlass, PhUserPlus } from "@phosphor-icons/vue";
 import PigAvatar from "./PigAvatar.vue";
 import RecipeCard from "./RecipeCard.vue";
 import DiscoverLiveCard from "./DiscoverLiveCard.vue";
+import IngredientFinder from "./IngredientFinder.vue";
+import RecipeRoulette from "./RecipeRoulette.vue";
+import { t } from "../lib/i18n.js";
 
 const props = defineProps({
   recipes: { type: Array, default: () => [] },
@@ -11,12 +14,14 @@ const props = defineProps({
   creators: { type: Array, default: () => [] },
   lives: { type: Array, default: () => [] },
   selectedTag: { type: String, default: "" },
+  selectedLanguage: { type: String, default: "" },
+  locale: { type: String, default: "es" },
   viewerId: { type: String, default: "" },
   loading: { type: Boolean, default: false },
   busy: { type: Boolean, default: false },
 });
 
-defineEmits(["tag", "profile", "follow", "open", "edit", "like", "save", "comments"]);
+defineEmits(["tag", "language", "profile", "follow", "open", "edit", "like", "save", "comments"]);
 const search = ref("");
 
 const term = computed(() => search.value.trim().toLowerCase().replace(/^#/, ""));
@@ -43,8 +48,8 @@ const visibleRecipes = computed(() => !term.value ? props.recipes : props.recipe
     <header class="grid gap-6 border-b-2 border-charcoal pb-7 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-end">
       <div>
         <p class="text-sm font-bold uppercase tracking-[0.17em] text-olive-dark">Más allá de tu mesa</p>
-        <h1 class="mt-1 font-display text-[clamp(3.3rem,9vw,6.4rem)] font-bold leading-none tracking-[-0.065em] text-charcoal">Descubrir.</h1>
-        <p class="mt-3 max-w-[620px] text-base leading-relaxed text-charcoal/65">Buscá una idea, tocá un hashtag o conocé a quienes están cocinando algo distinto.</p>
+        <h1 class="mt-1 font-display text-[clamp(3.3rem,9vw,6.4rem)] font-bold leading-none tracking-[-0.065em] text-charcoal">{{ t(locale, 'discoverTitle') }}</h1>
+        <p class="mt-3 max-w-[620px] text-base leading-relaxed text-charcoal/65">{{ t(locale, 'discoverIntro') }}</p>
       </div>
       <label class="relative block">
         <span class="sr-only">Buscar en Descubrir</span>
@@ -52,6 +57,13 @@ const visibleRecipes = computed(() => !term.value ? props.recipes : props.recipe
         <input v-model="search" type="search" class="min-h-14 w-full border-2 border-charcoal bg-porcelain pl-12 pr-4 outline-none placeholder:text-charcoal/40 focus:bg-cream" placeholder="Receta, persona o #hashtag" />
       </label>
     </header>
+
+    <div class="mt-6 flex flex-wrap items-center gap-2" aria-label="Filtrar recetas por idioma"><span class="mr-1 text-sm font-bold">Idioma:</span><button v-for="option in [{ id: '', label: 'Todos' }, { id: 'es', label: 'Español' }, { id: 'en', label: 'English' }, { id: 'pt', label: 'Português' }]" :key="option.id" type="button" class="focus-ring min-h-10 border-2 border-charcoal px-3 text-sm font-semibold" :class="selectedLanguage === option.id ? 'bg-charcoal text-porcelain' : 'bg-cream'" @click="$emit('language', option.id)">{{ option.label }}</button></div>
+
+    <div class="mt-8 grid gap-7 xl:grid-cols-[minmax(0,1.4fr)_minmax(300px,.6fr)]">
+      <IngredientFinder :language="selectedLanguage" @open="$emit('open', $event)" />
+      <RecipeRoulette :recipes="visibleRecipes" @open="$emit('open', $event)" />
+    </div>
 
     <section v-if="visibleLives.length" class="mt-8">
       <div class="mb-5 flex flex-wrap items-end justify-between gap-4">

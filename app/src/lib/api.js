@@ -80,8 +80,13 @@ export const api = {
     return { items: recipes };
   },
 
-  async discover(tag = "") {
-    if (!useDemo) return request(`/api/discover${tag ? `?tag=${encodeURIComponent(tag)}` : ""}`);
+  async discover(tag = "", language = "") {
+    if (!useDemo) {
+      const params = new URLSearchParams();
+      if (tag) params.set("tag", tag);
+      if (language) params.set("language", language);
+      return request(`/api/discover${params.size ? `?${params}` : ""}`);
+    }
     await pause();
     const counts = new Map();
     recipes.forEach((recipe) => (recipe.tags || []).forEach((name) => counts.set(name, (counts.get(name) || 0) + 1)));
@@ -92,7 +97,34 @@ export const api = {
       tags: [...counts.entries()].map(([name, recipeCount]) => ({ name, recipeCount, engagement: 0 })),
       creators: [...people.values()].filter((person) => person.id !== demoCurrentUser.id).map((person) => ({ ...person, recipeCount: recipes.filter((recipe) => recipe.author.id === person.id).length, followerCount: 0, followed: followedUsers.has(person.id) })),
       lives: demoLive ? [demoLive] : [],
-      items: tag ? recipes.filter((recipe) => (recipe.tags || []).includes(tag)) : recipes,
+      selectedLanguage: language || null,
+      items: recipes.filter((recipe) => (!tag || (recipe.tags || []).includes(tag)) && (!language || recipe.language === language)),
+    };
+  },
+
+  async dailyRecipe(language = "") {
+    if (!useDemo) return request(`/api/recipes/daily${language ? `?language=${encodeURIComponent(language)}` : ""}`);
+    await pause(80);
+    const candidates = recipes.filter((recipe) => !language || recipe.language === language);
+    return { date: new Date().toISOString().slice(0, 10), recipe: candidates[0] || null };
+  },
+
+  async recipesByIngredients(query, language = "") {
+    if (!useDemo) {
+      const params = new URLSearchParams({ q: query });
+      if (language) params.set("language", language);
+      return request(`/api/recipes/by-ingredients?${params}`);
+    }
+    await pause(160);
+    const pantry = query.toLowerCase().replace(/^tengo\s+/, "").split(/\s*(?:,|\by\b)\s*/).filter(Boolean);
+    return {
+      query,
+      pantry,
+      items: recipes.filter((recipe) => !language || recipe.language === language).map((recipe) => {
+        const matchedPantry = pantry.filter((item) => recipe.ingredients.some((ingredient) => ingredient.toLowerCase().includes(item)));
+        const missingIngredients = recipe.ingredients.filter((ingredient) => !pantry.some((item) => ingredient.toLowerCase().includes(item)));
+        return { recipe, matchedPantry, missingIngredients, canMake: missingIngredients.length === 0, matchPercent: pantry.length ? Math.round(matchedPantry.length / pantry.length * 100) : 0 };
+      }).filter((item) => item.matchedPantry.length).sort((a, b) => b.matchedPantry.length - a.matchedPantry.length),
     };
   },
 
@@ -236,21 +268,57 @@ export const api = {
     return { comments: comments[recipeId] || [] };
   },
 
-  async addComment(recipeId, body) {
+  async addComment(recipeId, body, imageUrl = null) {
     if (!useDemo) return request(`/api/recipes/${recipeId}/comments`, {
       method: "POST",
-      body: JSON.stringify({ body }),
+      body: JSON.stringify({ body, imageUrl }),
     });
     if (!demoAuthenticated) throw Object.assign(new Error("Iniciá sesión para comentar."), { status: 401 });
     const comment = {
       id: `comment_${crypto.randomUUID()}`,
       body,
+      imageUrl,
       createdAt: new Date().toISOString(),
       author: demoCurrentUser,
     };
     comments[recipeId] = [...(comments[recipeId] || []), comment];
     await pause(180);
     return { comment };
+  },
+
+  async votePoll(recipeId, optionId) {
+    if (!useDemo) return request(`/api/recipes/${encodeURIComponent(recipeId)}/poll`, { method: "POST", body: JSON.stringify({ optionId }) });
+    const recipe = findRecipe(recipeId);
+    if (!demoAuthenticated) throw Object.assign(new Error("Iniciá sesión para votar."), { status: 401 });
+    if (!recipe?.poll) throw Object.assign(new Error("No encontramos esa encuesta."), { status: 404 });
+    recipe.poll.options = recipe.poll.options.map((option) => ({ ...option, voted: option.id === optionId, voteCount: Math.max(0, option.voteCount + (option.id === optionId ? 1 : option.voted ? -1 : 0)) }));
+    recipe.poll.totalVotes = recipe.poll.options.reduce((total, option) => total + option.voteCount, 0);
+    return { poll: recipe.poll };
+  },
+
+  async myCollections(recipeId = "") {
+    if (!useDemo) return request(`/api/collections/mine${recipeId ? `?recipeId=${encodeURIComponent(recipeId)}` : ""}`);
+    return { collections: [] };
+  },
+
+  async createCollection(payload) {
+    if (!useDemo) return request("/api/collections", { method: "POST", body: JSON.stringify(payload) });
+    return { collection: { id: `col_${crypto.randomUUID()}`, ...payload, itemCount: 0, containsRecipe: false, updatedAt: new Date().toISOString() } };
+  },
+
+  async collection(collectionId) {
+    if (!useDemo) return request(`/api/collections/${encodeURIComponent(collectionId)}`);
+    return { collection: { id: collectionId, title: "Mi carpeta", description: "", itemCount: 0 }, recipes: [] };
+  },
+
+  async toggleCollectionRecipe(collectionId, recipeId) {
+    if (!useDemo) return request(`/api/collections/${encodeURIComponent(collectionId)}/recipes/${encodeURIComponent(recipeId)}`, { method: "POST", body: "{}" });
+    return { active: true };
+  },
+
+  async deleteCollection(collectionId) {
+    if (!useDemo) return request(`/api/collections/${encodeURIComponent(collectionId)}`, { method: "DELETE" });
+    return null;
   },
 
   async deleteComment(recipeId, commentId) {

@@ -83,6 +83,32 @@ test("normalizes and validates a complete recipe", () => {
   assert.equal(recipe.error, undefined);
 });
 
+test("understands a natural-language pantry list and scores recipes", () => {
+  const pantry = __test.parsePantryInput("Tengo huevo, harina y leche en casa");
+  assert.deepEqual(pantry, ["huevo", "harina", "leche"]);
+  const match = __test.scoreRecipeByPantry({ ingredients: ["2 huevos", "200 g de harina", "1 taza de azúcar"] }, pantry);
+  assert.deepEqual(match.matchedPantry, ["huevo", "harina"]);
+  assert.deepEqual(match.missingIngredients, ["1 taza de azúcar"]);
+  assert.equal(match.matchPercent, 67);
+});
+
+test("accepts recipe difficulty, language and a valid poll", () => {
+  const recipe = __test.validateRecipe({
+    title: "Panqueques simples",
+    summary: "Una receta rápida para compartir.",
+    cookMinutes: 20,
+    servings: 4,
+    difficulty: "medium",
+    language: "pt",
+    ingredients: ["Harina", "Leche"],
+    steps: ["Mezclar", "Cocinar"],
+    poll: { question: "¿Con qué los acompañarías?", options: ["Dulce de leche", "Fruta"] },
+  });
+  assert.equal(recipe.difficulty, "medium");
+  assert.equal(recipe.language, "pt");
+  assert.deepEqual(recipe.poll.options, ["Dulce de leche", "Fruta"]);
+});
+
 test("explains when the recipe story is too short", () => {
   const recipe = __test.validateRecipe({
     title: "Pan casero",

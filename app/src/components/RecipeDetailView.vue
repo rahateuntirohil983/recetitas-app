@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import {
   PhArrowLeft,
   PhBookmarkSimple,
@@ -7,24 +7,37 @@ import {
   PhClock,
   PhClockCounterClockwise,
   PhCookingPot,
+  PhFolder,
   PhHeart,
   PhPencilSimple,
+  PhListChecks,
+  PhPlayCircle,
   PhTrash,
   PhUsers,
 } from "@phosphor-icons/vue";
 import PigAvatar from "./PigAvatar.vue";
 import RecipeVideo from "./RecipeVideo.vue";
+import ShoppingListPanel from "./ShoppingListPanel.vue";
+import CookingMode from "./CookingMode.vue";
+import RecipePoll from "./RecipePoll.vue";
+import FolderPicker from "./FolderPicker.vue";
 
 const props = defineProps({
   recipe: { type: Object, default: null },
   viewerId: { type: String, default: "" },
   loading: { type: Boolean, default: false },
+  busy: { type: Boolean, default: false },
 });
 
-defineEmits(["back", "profile", "tag", "edit", "history", "like", "save", "comments", "delete"]);
+defineEmits(["back", "profile", "tag", "edit", "history", "like", "save", "comments", "delete", "vote-poll", "login", "notify"]);
 
 const canDelete = computed(() => Boolean(props.viewerId && props.recipe?.author?.id === props.viewerId));
 const formatDate = (value) => new Intl.DateTimeFormat("es-AR", { day: "numeric", month: "short", year: "numeric" }).format(new Date(value));
+const shoppingOpen = ref(false);
+const cookingOpen = ref(false);
+const foldersOpen = ref(false);
+const difficultyLabels = { easy: "Fácil", medium: "Intermedia", hard: "Desafiante" };
+const languageLabels = { es: "Español", en: "English", pt: "Português" };
 </script>
 
 <template>
@@ -61,6 +74,8 @@ const formatDate = (value) => new Intl.DateTimeFormat("es-AR", { day: "numeric",
         <div class="flex flex-wrap items-center gap-2">
           <span class="inline-flex items-center gap-2 bg-cream px-4 py-2.5 font-semibold text-charcoal"><PhClock :size="20" aria-hidden="true" /> {{ recipe.cookMinutes }} min</span>
           <span class="inline-flex items-center gap-2 bg-olive px-4 py-2.5 font-semibold text-charcoal"><PhUsers :size="20" aria-hidden="true" /> {{ recipe.servings }} porciones</span>
+          <span class="inline-flex items-center gap-2 border-2 border-charcoal/15 px-4 py-2 font-semibold text-charcoal">{{ difficultyLabels[recipe.difficulty] || difficultyLabels.easy }}</span>
+          <span class="inline-flex items-center gap-2 border-2 border-charcoal/15 px-4 py-2 font-semibold text-charcoal">{{ languageLabels[recipe.language] || languageLabels.es }}</span>
         </div>
 
         <h1 class="mt-5 min-w-0 break-words [overflow-wrap:anywhere] font-display text-[clamp(2.8rem,9vw,5.8rem)] font-bold leading-[0.95] tracking-[-0.055em] text-charcoal">{{ recipe.title }}</h1>
@@ -73,6 +88,12 @@ const formatDate = (value) => new Intl.DateTimeFormat("es-AR", { day: "numeric",
           <div class="min-w-0"><p class="text-xs font-bold uppercase tracking-[0.14em] text-olive-dark">Editada {{ formatDate(recipe.updatedAt) }}</p><p class="mt-1 break-words text-sm text-charcoal/70">{{ recipe.lastEditNote }}</p></div>
           <button type="button" class="focus-ring inline-flex min-h-10 shrink-0 items-center gap-2 px-3 text-sm font-bold hover:bg-blush" @click="$emit('history', recipe)"><PhClockCounterClockwise :size="19" /> {{ recipe.editCount }} {{ recipe.editCount === 1 ? 'cambio' : 'cambios' }}</button>
         </div>
+
+        <section class="mt-8 border-2 border-charcoal bg-blush p-5 sm:p-6">
+          <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center"><div><p class="text-xs font-bold uppercase tracking-[0.17em] text-olive-dark">Cociná sin perderte</p><h2 class="mt-1 font-display text-3xl font-bold tracking-[-0.045em]">Todo listo para empezar.</h2><p class="mt-2 text-sm leading-relaxed text-charcoal/65">Armá las compras, seguí un paso a la vez y usá el temporizador de {{ recipe.cookMinutes }} minutos.</p></div><div class="grid gap-2 sm:grid-cols-3"><button type="button" class="focus-ring inline-flex min-h-12 items-center justify-center gap-2 border-2 border-charcoal bg-porcelain px-4 font-bold" @click="shoppingOpen = true"><PhListChecks :size="21" /> Lista</button><button type="button" class="focus-ring inline-flex min-h-12 items-center justify-center gap-2 bg-charcoal px-4 font-bold text-porcelain" @click="cookingOpen = true"><PhPlayCircle :size="22" weight="fill" /> Cocinar</button><button type="button" class="focus-ring inline-flex min-h-12 items-center justify-center gap-2 border-2 border-charcoal bg-olive px-4 font-bold" @click="foldersOpen = true"><PhFolder :size="21" /> Carpeta</button></div></div>
+        </section>
+
+        <RecipePoll v-if="recipe.poll" :poll="recipe.poll" :busy="busy" @vote="$emit('vote-poll', recipe, $event)" />
 
         <section v-if="recipe.videoUrl && recipe.imageUrl" class="mt-8 border-t-2 border-charcoal/15 pt-8">
           <p class="text-xs font-bold uppercase tracking-[0.17em] text-olive-dark">El resultado</p>
@@ -122,5 +143,8 @@ const formatDate = (value) => new Intl.DateTimeFormat("es-AR", { day: "numeric",
         </div>
       </div>
     </article>
+    <ShoppingListPanel v-if="shoppingOpen && recipe" :recipe="recipe" @close="shoppingOpen = false" />
+    <CookingMode v-if="cookingOpen && recipe" :recipe="recipe" @close="cookingOpen = false" />
+    <FolderPicker v-if="foldersOpen && recipe" :recipe="recipe" @close="foldersOpen = false" @login="foldersOpen = false; $emit('login')" @notify="$emit('notify', $event)" />
   </section>
 </template>

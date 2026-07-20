@@ -15,7 +15,7 @@ const summaryInput = ref(null);
 const ingredientsInput = ref(null);
 const stepsInput = ref(null);
 const editNoteInput = ref(null);
-const fieldErrors = reactive({ title: "", summary: "", cookMinutes: "", servings: "", ingredients: "", steps: "", editNote: "" });
+const fieldErrors = reactive({ title: "", summary: "", cookMinutes: "", servings: "", ingredients: "", steps: "", poll: "", editNote: "" });
 const imageFile = ref(null);
 const imagePreview = ref("");
 const imageError = ref("");
@@ -39,10 +39,14 @@ const form = reactive({
   summary: "",
   cookMinutes: 35,
   servings: 4,
+  difficulty: "easy",
+  language: "es",
   imageKey: "pumpkin",
   tags: "",
   ingredients: "",
   steps: "",
+  pollQuestion: "",
+  pollOptions: "",
   editNote: "",
 });
 
@@ -230,20 +234,28 @@ const prepareForm = () => {
     summary: recipe.summary,
     cookMinutes: recipe.cookMinutes,
     servings: recipe.servings,
+    difficulty: recipe.difficulty || "easy",
+    language: recipe.language || "es",
     imageKey: recipe.imageKey || "pumpkin",
     tags: (recipe.tags || []).map((tag) => `#${tag}`).join(" "),
     ingredients: (recipe.ingredients || []).join("\n"),
     steps: (recipe.steps || []).join("\n"),
+    pollQuestion: "",
+    pollOptions: "",
     editNote: "",
   } : {
     title: "",
     summary: "",
     cookMinutes: 35,
     servings: 4,
+    difficulty: "easy",
+    language: document.documentElement.lang || "es",
     imageKey: "pumpkin",
     tags: "",
     ingredients: "",
     steps: "",
+    pollQuestion: "",
+    pollOptions: "",
     editNote: "",
   });
   existingImageUrl.value = recipe?.imageUrl || "";
@@ -277,6 +289,8 @@ const submit = async () => {
   const ingredients = form.ingredients.split("\n").map((value) => value.trim()).filter(Boolean);
   const steps = form.steps.split("\n").map((value) => value.trim()).filter(Boolean);
   const tags = parsedTags.value;
+  const pollOptions = form.pollOptions.split("\n").map((value) => value.trim()).filter(Boolean).slice(0, 4);
+  const wantsPoll = !props.recipe && Boolean(form.pollQuestion.trim() || pollOptions.length);
   const titleLength = form.title.trim().length;
   const summaryLength = form.summary.trim().length;
 
@@ -287,6 +301,7 @@ const submit = async () => {
     servings: !Number.isInteger(form.servings) || form.servings < 1 || form.servings > 24 ? "Ingresá entre 1 y 24 porciones." : "",
     ingredients: !ingredients.length ? "Agregá al menos un ingrediente." : "",
     steps: !steps.length ? "Agregá al menos un paso." : "",
+    poll: wantsPoll && (form.pollQuestion.trim().length < 5 || pollOptions.length < 2) ? "Escribí una pregunta y al menos dos opciones, una por línea." : "",
     editNote: props.recipe && form.editNote.trim().length < 3 ? "Contá brevemente qué modificaste." : "",
   });
 
@@ -313,6 +328,7 @@ const submit = async () => {
     ingredients,
     steps,
     tags,
+    poll: wantsPoll ? { question: form.pollQuestion.trim(), options: pollOptions } : null,
     imageFile: imageFile.value,
     videoFile: videoFile.value,
     imageUrl: imageFile.value ? null : existingImageUrl.value || null,
@@ -352,6 +368,8 @@ const submit = async () => {
           <div class="grid gap-5 sm:grid-cols-2">
             <label class="field-label">Minutos<input v-model.number="form.cookMinutes" type="number" min="1" max="1440" class="field-input" :class="fieldErrors.cookMinutes && 'field-input--error'" /><span v-if="fieldErrors.cookMinutes" class="field-error">{{ fieldErrors.cookMinutes }}</span></label>
             <label class="field-label">Porciones<input v-model.number="form.servings" type="number" min="1" max="24" class="field-input" :class="fieldErrors.servings && 'field-input--error'" /><span v-if="fieldErrors.servings" class="field-error">{{ fieldErrors.servings }}</span></label>
+            <label class="field-label">Dificultad<select v-model="form.difficulty" class="field-input"><option value="easy">Fácil</option><option value="medium">Intermedia</option><option value="hard">Desafiante</option></select></label>
+            <label class="field-label">Idioma de la receta<select v-model="form.language" class="field-input"><option value="es">Español</option><option value="en">English</option><option value="pt">Português</option></select></label>
           </div>
 
           <div class="field-label">
@@ -407,6 +425,12 @@ const submit = async () => {
             <label class="field-label">Ingredientes, uno por línea<textarea ref="ingredientsInput" v-model="form.ingredients" class="field-input min-h-40 resize-y" :class="fieldErrors.ingredients && 'field-input--error'" required placeholder="4 tomates\n2 dientes de ajo\nAceite de oliva" /><span v-if="fieldErrors.ingredients" class="field-error">{{ fieldErrors.ingredients }}</span></label>
             <label class="field-label">Pasos, uno por línea<textarea ref="stepsInput" v-model="form.steps" class="field-input min-h-40 resize-y" :class="fieldErrors.steps && 'field-input--error'" required placeholder="Asá los tomates.\nPrepará la masa.\nHorneá hasta dorar." /><span v-if="fieldErrors.steps" class="field-error">{{ fieldErrors.steps }}</span></label>
           </div>
+
+          <section v-if="!recipe" class="border-2 border-charcoal bg-cream p-4 sm:p-5">
+            <p class="text-xs font-bold uppercase tracking-[0.16em] text-olive-dark">Opcional</p>
+            <h3 class="mt-1 font-display text-2xl font-bold">Sumá una encuesta.</h3>
+            <div class="mt-4 grid gap-4"><label class="field-label">Pregunta<input v-model="form.pollQuestion" maxlength="140" class="field-input" placeholder="¿Con qué acompañarías esta receta?" /></label><label class="field-label">Opciones, una por línea<textarea v-model="form.pollOptions" maxlength="244" class="field-input min-h-28 resize-y" placeholder="Ensalada\nPapas al horno\nArroz" /></label><span v-if="fieldErrors.poll" class="field-error">{{ fieldErrors.poll }}</span><p class="text-sm text-charcoal/55">Entre 2 y 4 opciones. Cada persona puede votar una vez y cambiar su elección.</p></div>
+          </section>
 
           <label v-if="recipe" class="field-label">
             ¿Qué modificaste?

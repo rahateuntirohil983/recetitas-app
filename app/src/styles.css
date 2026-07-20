@@ -12,8 +12,8 @@
 }
 
 :root {
-  color: #242421;
-  background: #f9f5f3;
+  color: var(--color-charcoal);
+  background: var(--color-porcelain);
   font-family: "DM Sans", sans-serif;
   font-synthesis: weight;
   text-rendering: optimizeLegibility;
@@ -25,7 +25,7 @@
 }
 
 html {
-  background: #f9f5f3;
+  background: var(--color-porcelain);
   overflow-x: hidden;
 }
 
@@ -34,7 +34,42 @@ body {
   min-width: 320px;
   min-height: 100vh;
   overflow-x: hidden;
-  background: #f9f5f3;
+  background: var(--color-porcelain);
+}
+
+:root[data-color-mode="red-green"] {
+  --color-blush: #67a9cf;
+  --color-cream: #f3eee5;
+  --color-porcelain: #fffaf2;
+  --color-olive: #f0ad4e;
+  --color-olive-dark: #7a4f00;
+  --color-charcoal: #1d2733;
+}
+
+:root[data-color-mode="blue-yellow"] {
+  --color-blush: #d96c75;
+  --color-cream: #f7eae7;
+  --color-porcelain: #fff8f7;
+  --color-olive: #62b3a5;
+  --color-olive-dark: #286c62;
+  --color-charcoal: #28231f;
+}
+
+:root[data-color-mode="contrast"] {
+  --color-blush: #ff8fb3;
+  --color-cream: #f1f1f1;
+  --color-porcelain: #ffffff;
+  --color-olive: #ffee58;
+  --color-olive-dark: #3b4300;
+  --color-charcoal: #000000;
+}
+
+:root[data-color-mode="contrast"] button,
+:root[data-color-mode="contrast"] input,
+:root[data-color-mode="contrast"] textarea,
+:root[data-color-mode="contrast"] select,
+:root[data-color-mode="contrast"] article {
+  border-color: #000;
 }
 
 button,
@@ -315,4 +350,13 @@ select:focus-visible {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+:root[data-motion="reduced"] *,
+:root[data-motion="reduced"] *::before,
+:root[data-motion="reduced"] *::after {
+  scroll-behavior: auto !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
 }

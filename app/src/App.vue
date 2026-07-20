@@ -4,6 +4,7 @@ import {
   PhBell,
   PhBookmarkSimple,
   PhCompass,
+  PhGearSix,
   PhHouse,
   PhMagnifyingGlass,
   PhPlus,
@@ -14,8 +15,12 @@ import AppBrand from "./components/AppBrand.vue";
 import PigAvatar from "./components/PigAvatar.vue";
 import RecipeCard from "./components/RecipeCard.vue";
 import { api } from "./lib/api.js";
+import { applyPreferences, loadPreferences, savePreferences } from "./lib/preferences.js";
+import { t } from "./lib/i18n.js";
 
 const CommentsPanel = defineAsyncComponent(() => import("./components/CommentsPanel.vue"));
+const AccessibilityPanel = defineAsyncComponent(() => import("./components/AccessibilityPanel.vue"));
+const CollectionPanel = defineAsyncComponent(() => import("./components/CollectionPanel.vue"));
 const ComposerModal = defineAsyncComponent(() => import("./components/ComposerModal.vue"));
 const ConnectionsPanel = defineAsyncComponent(() => import("./components/ConnectionsPanel.vue"));
 const DiscoverView = defineAsyncComponent(() => import("./components/DiscoverView.vue"));
@@ -26,6 +31,7 @@ const LiveStudio = defineAsyncComponent(() => import("./components/LiveStudio.vu
 const NotificationsPanel = defineAsyncComponent(() => import("./components/NotificationsPanel.vue"));
 const ProfileView = defineAsyncComponent(() => import("./components/ProfileView.vue"));
 const RecipeDetailView = defineAsyncComponent(() => import("./components/RecipeDetailView.vue"));
+const DailyRecipeCard = defineAsyncComponent(() => import("./components/DailyRecipeCard.vue"));
 
 const loading = ref(true);
 const session = ref({ authenticated: false, user: null, loginUrl: "/app/?login=1" });
@@ -37,6 +43,10 @@ const discoverTags = ref([]);
 const discoverCreators = ref([]);
 const discoverLives = ref([]);
 const selectedDiscoverTag = ref("");
+const selectedDiscoverLanguage = ref("");
+const preferences = ref(loadPreferences());
+applyPreferences(preferences.value);
+const text = (key) => t(preferences.value.language, key);
 const loginOpen = ref(false);
 const composerOpen = ref(false);
 const composerKey = ref(0);
@@ -67,6 +77,12 @@ const editHistoryOpen = ref(false);
 const editHistory = ref([]);
 const editHistoryLoading = ref(false);
 const liveStudioOpen = ref(false);
+const accessibilityOpen = ref(false);
+const dailyRecipe = ref(null);
+const collectionOpen = ref(false);
+const collectionLoading = ref(false);
+const selectedCollection = ref(null);
+const collectionRecipes = ref([]);
 
 watch(loginOpen, (open) => {
   if (open) authError.value = "";
@@ -90,24 +106,42 @@ const flash = (message) => {
   window.setTimeout(() => { if (toast.value === message) toast.value = ""; }, 2800);
 };
 
-const loadDiscover = async (tag = "", updateUrl = true) => {
+const updatePreferences = async (next) => {
+  preferences.value = next;
+  savePreferences(next);
+  accessibilityOpen.value = false;
+  try {
+    if (activeView.value === "discover") await loadDiscover(selectedDiscoverTag.value, false, selectedDiscoverLanguage.value);
+    else if (activeView.value === "feed") dailyRecipe.value = (await api.dailyRecipe(next.language)).recipe;
+  } catch {
+    // Language and accessibility preferences are device-local and remain saved offline.
+  }
+  flash(next.language === "en" ? "Settings saved." : next.language === "pt" ? "Ajustes salvos." : "Ajustes guardados.");
+};
+
+const setDiscoverLanguage = (language) => loadDiscover(selectedDiscoverTag.value, true, language);
+
+const loadDiscover = async (tag = "", updateUrl = true, language = selectedDiscoverLanguage.value) => {
   loading.value = true;
   activeView.value = "discover";
   lastCollectionView.value = "discover";
   profile.value = null;
   selectedDiscoverTag.value = String(tag || "").replace(/^#/, "");
+  selectedDiscoverLanguage.value = String(language || "");
   if (updateUrl) {
     const params = new URLSearchParams({ view: "discover" });
     if (selectedDiscoverTag.value) params.set("tag", selectedDiscoverTag.value);
+    if (selectedDiscoverLanguage.value) params.set("language", selectedDiscoverLanguage.value);
     window.history.pushState({}, "", `/app/?${params}`);
   }
   try {
-    const response = await api.discover(selectedDiscoverTag.value);
+    const response = await api.discover(selectedDiscoverTag.value, selectedDiscoverLanguage.value);
     recipes.value = response.items;
     discoverTags.value = response.tags;
     discoverCreators.value = response.creators;
     discoverLives.value = response.lives || [];
     selectedDiscoverTag.value = response.selectedTag || "";
+    selectedDiscoverLanguage.value = response.selectedLanguage || "";
   } catch (failure) {
     flash(failure.message);
   } finally {
@@ -123,8 +157,12 @@ const loadView = async (view = activeView.value, updateUrl = true) => {
   profile.value = null;
   if (updateUrl) window.history.pushState({}, "", view === "saved" ? "/app/?view=saved" : "/app/");
   try {
-    const response = view === "saved" ? await api.saved() : await api.feed();
+    const [response, daily] = await Promise.all([
+      view === "saved" ? api.saved() : api.feed(),
+      view === "feed" ? api.dailyRecipe(preferences.value.language) : Promise.resolve({ recipe: dailyRecipe.value }),
+    ]);
     recipes.value = response.items;
+    if (view === "feed") dailyRecipe.value = daily.recipe;
   } catch (failure) {
     if (failure.status === 401) loginOpen.value = true;
     flash(failure.message);
@@ -343,6 +381,56 @@ const actOnRecipe = async (recipe, action) => {
   }
 };
 
+const votePoll = async (recipe, optionId) => {
+  busy.value = true;
+  try {
+    const response = await api.votePoll(recipe.id, optionId);
+    replaceRecipe({ ...recipe, poll: response.poll });
+  } catch (failure) {
+    if (failure.status === 401) loginOpen.value = true;
+    else flash(failure.message);
+  } finally {
+    busy.value = false;
+  }
+};
+
+const createProfileCollection = async ({ title, description = "" }) => {
+  busy.value = true;
+  try {
+    const response = await api.createCollection({ title, description });
+    if (profile.value?.isOwnProfile) profile.value = { ...profile.value, collections: [response.collection, ...(profile.value.collections || [])] };
+    flash("Carpeta creada y visible en tu perfil.");
+  } catch (failure) {
+    if (failure.status === 401) loginOpen.value = true;
+    else flash(failure.message);
+  } finally { busy.value = false; }
+};
+
+const openCollection = async (collection) => {
+  collectionOpen.value = true;
+  collectionLoading.value = true;
+  selectedCollection.value = collection;
+  collectionRecipes.value = [];
+  try {
+    const response = await api.collection(collection.id);
+    selectedCollection.value = response.collection;
+    collectionRecipes.value = response.recipes;
+  } catch (failure) {
+    collectionOpen.value = false;
+    flash(failure.message);
+  } finally { collectionLoading.value = false; }
+};
+
+const deleteCollection = async (collection) => {
+  if (!window.confirm(`¿Eliminar la carpeta “${collection.title}”?`)) return;
+  try {
+    await api.deleteCollection(collection.id);
+    if (profile.value) profile.value = { ...profile.value, collections: (profile.value.collections || []).filter((item) => item.id !== collection.id) };
+    collectionOpen.value = false;
+    flash("Carpeta eliminada.");
+  } catch (failure) { flash(failure.message); }
+};
+
 const openComments = async (recipe) => {
   selectedRecipe.value = recipe;
   commentsOpen.value = true;
@@ -353,7 +441,7 @@ const openComments = async (recipe) => {
   }
 };
 
-const addComment = async (body) => {
+const addComment = async ({ body, imageFile, previewUrl }) => {
   if (!session.value.authenticated) {
     loginOpen.value = true;
     return;
@@ -363,6 +451,7 @@ const addComment = async (body) => {
   const optimisticComment = {
     id: temporaryId,
     body,
+    imageUrl: previewUrl || null,
     createdAt: new Date().toISOString(),
     author: session.value.user,
   };
@@ -370,7 +459,8 @@ const addComment = async (body) => {
   replaceRecipe({ ...selectedRecipe.value, commentCount: selectedRecipe.value.commentCount + 1 });
   busy.value = true;
   try {
-    const response = await api.addComment(recipeId, body);
+    const imageUrl = imageFile ? (await api.uploadImage(imageFile)).imageUrl : null;
+    const response = await api.addComment(recipeId, body, imageUrl);
     comments.value = comments.value.map((comment) => comment.id === temporaryId
       ? (response.comment || optimisticComment)
       : comment);
@@ -382,6 +472,7 @@ const addComment = async (body) => {
     if (recipe) replaceRecipe({ ...recipe, commentCount: Math.max(0, recipe.commentCount - 1) });
     flash(failure.message);
   } finally {
+    if (previewUrl?.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
     busy.value = false;
   }
 };
@@ -537,6 +628,7 @@ onMounted(async () => {
     const params = new URLSearchParams(window.location.search);
     const requestedView = ["saved", "discover"].includes(params.get("view")) ? params.get("view") : "feed";
     selectedDiscoverTag.value = params.get("tag") || "";
+    selectedDiscoverLanguage.value = ["es", "en", "pt"].includes(params.get("language")) ? params.get("language") : "";
     const profileRoute = window.location.pathname.match(/^\/app\/u\/([a-z0-9_]{3,24})\/?$/i);
     const recipeRoute = window.location.pathname.match(/^\/app\/r\/([^/]+)\/?$/i);
     const contentRequest = recipeRoute
@@ -561,6 +653,7 @@ onMounted(async () => {
       else {
         const nextParams = new URLSearchParams(window.location.search);
         selectedDiscoverTag.value = nextParams.get("tag") || "";
+        selectedDiscoverLanguage.value = ["es", "en", "pt"].includes(nextParams.get("language")) ? nextParams.get("language") : "";
         loadView(["saved", "discover"].includes(nextParams.get("view")) ? nextParams.get("view") : "feed", false);
       }
     });
@@ -577,15 +670,16 @@ onMounted(async () => {
       <AppBrand />
 
       <nav class="mt-14 grid gap-2" aria-label="Navegación principal">
-        <button type="button" class="side-nav" :class="activeView === 'feed' && 'side-nav--active'" @click="loadView('feed')"><PhHouse :size="22" /> Para vos</button>
-        <button type="button" class="side-nav" :class="activeView === 'discover' && 'side-nav--active'" @click="loadDiscover()"><PhCompass :size="22" /> Descubrir</button>
-        <button type="button" class="side-nav" :class="activeView === 'saved' && 'side-nav--active'" @click="loadView('saved')"><PhBookmarkSimple :size="22" /> Guardadas</button>
-        <button v-if="session.authenticated" type="button" class="side-nav relative" @click="openNotifications"><PhBell :size="22" /> Notificaciones <span v-if="unreadNotifications" class="ml-auto grid min-w-6 place-items-center rounded-full bg-blush px-1.5 py-0.5 text-xs font-bold text-charcoal">{{ unreadNotifications > 99 ? '99+' : unreadNotifications }}</span></button>
-        <button type="button" class="side-nav" :class="activeView === 'profile' && profile?.isOwnProfile && 'side-nav--active'" @click="openOwnProfile"><PhUserCircle :size="22" /> Mi perfil</button>
+        <button type="button" class="side-nav" :class="activeView === 'feed' && 'side-nav--active'" @click="loadView('feed')"><PhHouse :size="22" /> {{ text('feed') }}</button>
+        <button type="button" class="side-nav" :class="activeView === 'discover' && 'side-nav--active'" @click="loadDiscover()"><PhCompass :size="22" /> {{ text('discover') }}</button>
+        <button type="button" class="side-nav" :class="activeView === 'saved' && 'side-nav--active'" @click="loadView('saved')"><PhBookmarkSimple :size="22" /> {{ text('saved') }}</button>
+        <button v-if="session.authenticated" type="button" class="side-nav relative" @click="openNotifications"><PhBell :size="22" /> {{ text('notifications') }} <span v-if="unreadNotifications" class="ml-auto grid min-w-6 place-items-center rounded-full bg-blush px-1.5 py-0.5 text-xs font-bold text-charcoal">{{ unreadNotifications > 99 ? '99+' : unreadNotifications }}</span></button>
+        <button type="button" class="side-nav" :class="activeView === 'profile' && profile?.isOwnProfile && 'side-nav--active'" @click="openOwnProfile"><PhUserCircle :size="22" /> {{ text('profile') }}</button>
+        <button type="button" class="side-nav" @click="accessibilityOpen = true"><PhGearSix :size="22" /> {{ text('settings') }}</button>
       </nav>
 
       <button type="button" class="focus-ring mt-8 inline-flex min-h-13 items-center justify-between bg-blush px-5 font-semibold text-charcoal hover:bg-olive" @click="startPublishing">
-        Compartir receta <PhPlus :size="20" weight="bold" />
+        {{ text('share') }} <PhPlus :size="20" weight="bold" />
       </button>
 
       <div class="mt-auto border-t border-porcelain/18 pt-5">
@@ -594,15 +688,16 @@ onMounted(async () => {
             <PigAvatar :index="session.user.avatarIndex" :size="44" :label="`Avatar de ${session.user.displayName}`" class="ring-2 ring-porcelain/30" />
             <span class="min-w-0"><strong class="block truncate">{{ session.user.displayName }}</strong><span class="block truncate text-sm text-porcelain/55">@{{ session.user.handle }}</span></span>
           </button>
-          <button type="button" class="mt-4 inline-flex items-center gap-2 text-sm text-porcelain/65 hover:text-blush" @click="logout"><PhSignOut :size="18" /> Salir</button>
+          <button type="button" class="mt-4 inline-flex items-center gap-2 text-sm text-porcelain/65 hover:text-blush" @click="logout"><PhSignOut :size="18" /> {{ text('logout') }}</button>
         </template>
-        <button v-else type="button" class="text-left text-sm font-semibold text-blush hover:text-olive" @click="loginOpen = true">Entrar a la comunidad</button>
+        <button v-else type="button" class="text-left text-sm font-semibold text-blush hover:text-olive" @click="loginOpen = true">{{ text('enter') }}</button>
       </div>
     </aside>
 
     <header class="sticky top-0 z-20 flex h-[72px] items-center justify-between border-b-2 border-charcoal bg-charcoal px-4 text-porcelain lg:hidden">
       <AppBrand compact />
       <div class="flex items-center gap-2">
+        <button type="button" class="focus-ring grid size-11 place-items-center border border-porcelain/30 text-porcelain" :aria-label="text('settings')" @click="accessibilityOpen = true"><PhGearSix :size="21" /></button>
         <button v-if="session.authenticated" type="button" class="focus-ring relative grid size-11 place-items-center border border-porcelain/30 text-porcelain" aria-label="Abrir notificaciones" @click="openNotifications"><PhBell :size="21" /><span v-if="unreadNotifications" class="absolute -right-1 -top-1 grid min-w-5 place-items-center rounded-full bg-blush px-1 text-[10px] font-bold text-charcoal">{{ unreadNotifications > 9 ? '9+' : unreadNotifications }}</span></button>
         <button type="button" class="focus-ring grid size-11 place-items-center border border-porcelain/30 text-porcelain" :class="activeView === 'discover' && 'bg-olive text-charcoal'" aria-label="Descubrir recetas" @click="loadDiscover()"><PhCompass :size="22" /></button>
         <button type="button" class="focus-ring grid size-11 place-items-center bg-blush text-charcoal" aria-label="Compartir una receta" @click="startPublishing"><PhPlus :size="22" weight="bold" /></button>
@@ -614,35 +709,37 @@ onMounted(async () => {
         <section class="min-w-0 px-4 pb-28 pt-7 sm:px-7 lg:pb-16 lg:pt-10">
           <header class="mb-7 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <p class="text-sm font-bold uppercase tracking-[0.17em] text-olive-dark">La mesa de hoy</p>
+              <p class="text-sm font-bold uppercase tracking-[0.17em] text-olive-dark">{{ text('tableToday') }}</p>
               <h1 class="mt-1 font-display text-[clamp(3.3rem,9vw,6rem)] font-bold leading-none tracking-[-0.065em] text-charcoal">
-                {{ activeView === 'saved' ? 'Guardadas.' : 'Para vos.' }}
+                {{ activeView === 'saved' ? `${text('saved')}.` : `${text('feed')}.` }}
               </h1>
             </div>
             <label class="relative block sm:w-[280px]">
-              <span class="sr-only">Buscar recetas</span>
+              <span class="sr-only">{{ text('search') }}</span>
               <PhMagnifyingGlass :size="20" class="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-charcoal/45" aria-hidden="true" />
-              <input v-model="search" type="search" class="min-h-12 w-full border-2 border-charcoal bg-porcelain pl-11 pr-4 outline-none placeholder:text-charcoal/40 focus:bg-cream" placeholder="Buscar receta o persona" />
+              <input v-model="search" type="search" class="min-h-12 w-full border-2 border-charcoal bg-porcelain pl-11 pr-4 outline-none placeholder:text-charcoal/40 focus:bg-cream" :placeholder="text('search')" />
             </label>
           </header>
+
+          <DailyRecipeCard v-if="activeView === 'feed' && dailyRecipe" class="mb-7 lg:hidden" :recipe="dailyRecipe" @open="openRecipe" />
 
           <button type="button" class="composer-prompt focus-ring mb-7 flex w-full items-center gap-4 border-2 border-charcoal bg-blush px-5 py-4 text-left hover:bg-olive sm:px-6" @click="startPublishing">
             <PigAvatar v-if="session.user" :index="session.user.avatarIndex" :size="48" :label="`Avatar de ${session.user.displayName}`" class="ring-2 ring-charcoal" />
             <span v-else class="grid size-12 shrink-0 place-items-center rounded-full bg-charcoal font-display text-xl font-bold text-porcelain">+</span>
             <span class="flex-1">
-              <strong class="block font-display text-xl text-charcoal">¿Qué cocinaste?</strong>
-              <span class="text-sm text-charcoal/65">Compartí una receta, un recuerdo o ese truco que nunca falla.</span>
+              <strong class="block font-display text-xl text-charcoal">{{ text('whatCooked') }}</strong>
+              <span class="text-sm text-charcoal/65">{{ text('sharePrompt') }}</span>
             </span>
             <PhPlus :size="24" class="shrink-0" weight="bold" aria-hidden="true" />
           </button>
 
           <div v-if="loading" class="border-2 border-charcoal bg-cream px-6 py-16 text-center font-display text-2xl text-charcoal/60" role="status">
-            Preparando la mesa…
+            {{ text('loading') }}
           </div>
           <div v-else-if="!filteredRecipes.length" class="border-2 border-charcoal bg-cream px-6 py-16 text-center">
-            <p class="font-display text-3xl font-bold">Todavía no hay nada por acá.</p>
+            <p class="font-display text-3xl font-bold">{{ text('empty') }}</p>
             <button type="button" class="mt-5 bg-charcoal px-5 py-3 font-semibold text-porcelain" @click="activeView === 'saved' ? loadView('feed') : startPublishing()">
-              {{ activeView === 'saved' ? 'Volver al feed' : 'Publicar la primera' }}
+              {{ activeView === 'saved' ? text('backFeed') : text('publishFirst') }}
             </button>
           </div>
           <div v-else class="grid gap-7">
@@ -651,24 +748,25 @@ onMounted(async () => {
         </section>
 
         <aside class="hidden border-l-2 border-charcoal/15 px-7 pb-10 pt-10 lg:block">
+          <DailyRecipeCard v-if="activeView === 'feed' && dailyRecipe" class="mb-7" :recipe="dailyRecipe" @open="openRecipe" />
           <section class="profile-note bg-blush px-6 py-7">
             <template v-if="session.authenticated">
-              <p class="text-xs font-bold uppercase tracking-[0.16em] text-olive-dark">Tu recetario</p>
+              <p class="text-xs font-bold uppercase tracking-[0.16em] text-olive-dark">{{ text('yourBook') }}</p>
               <h2 class="mt-2 font-display text-3xl font-bold leading-tight">Hola, {{ session.user.displayName }}.</h2>
-              <p class="mt-3 text-sm leading-relaxed text-charcoal/70">Guardá lo que quieras volver a cocinar y compartí lo que merece pasar de mano en mano.</p>
-              <button type="button" class="mt-5 w-full bg-charcoal px-4 py-3 font-semibold text-porcelain" @click="loadView('saved')">Ver mis guardadas</button>
+              <p class="mt-3 text-sm leading-relaxed text-charcoal/70">{{ text('saveIntro') }}</p>
+              <button type="button" class="mt-5 w-full bg-charcoal px-4 py-3 font-semibold text-porcelain" @click="loadView('saved')">{{ text('viewSaved') }}</button>
             </template>
             <template v-else>
-              <p class="text-xs font-bold uppercase tracking-[0.16em] text-olive-dark">Sumate a la mesa</p>
-              <h2 class="mt-2 font-display text-3xl font-bold leading-tight">Tu recetario empieza acá.</h2>
-              <p class="mt-3 text-sm leading-relaxed text-charcoal/70">Creá un perfil para guardar, comentar y compartir.</p>
-              <button type="button" class="mt-5 w-full bg-charcoal px-4 py-3 font-semibold text-porcelain" @click="loginOpen = true">Entrar</button>
+              <p class="text-xs font-bold uppercase tracking-[0.16em] text-olive-dark">{{ text('joinTable') }}</p>
+              <h2 class="mt-2 font-display text-3xl font-bold leading-tight">{{ text('bookStarts') }}</h2>
+              <p class="mt-3 text-sm leading-relaxed text-charcoal/70">{{ text('joinIntro') }}</p>
+              <button type="button" class="mt-5 w-full bg-charcoal px-4 py-3 font-semibold text-porcelain" @click="loginOpen = true">{{ text('enterShort') }}</button>
             </template>
           </section>
 
-          <button type="button" class="focus-ring mt-7 w-full border-2 border-charcoal bg-porcelain px-6 py-6 text-left transition hover:bg-olive" @click="loadDiscover()"><span class="text-xs font-bold uppercase tracking-[0.16em] text-olive-dark">Hashtags, personas y recetas</span><strong class="mt-2 block font-display text-2xl">Abrir Descubrir.</strong></button>
+          <button type="button" class="focus-ring mt-7 w-full border-2 border-charcoal bg-porcelain px-6 py-6 text-left transition hover:bg-olive" @click="loadDiscover()"><span class="text-xs font-bold uppercase tracking-[0.16em] text-olive-dark">{{ text('tagsPeople') }}</span><strong class="mt-2 block font-display text-2xl">{{ text('openDiscover') }}</strong></button>
 
-          <a href="/" class="mt-7 block text-sm font-semibold text-charcoal/60 underline decoration-2 underline-offset-4 hover:text-charcoal">Volver a la landing</a>
+          <a href="/" class="mt-7 block text-sm font-semibold text-charcoal/60 underline decoration-2 underline-offset-4 hover:text-charcoal">{{ text('backLanding') }}</a>
         </aside>
       </div>
 
@@ -679,10 +777,13 @@ onMounted(async () => {
         :creators="discoverCreators"
         :lives="discoverLives"
         :selected-tag="selectedDiscoverTag"
+        :selected-language="selectedDiscoverLanguage"
+        :locale="preferences.language"
         :viewer-id="session.user?.id || ''"
         :loading="loading"
         :busy="busy"
         @tag="loadDiscover"
+        @language="setDiscoverLanguage"
         @profile="openProfile"
         @follow="toggleFollow"
         @open="openRecipe"
@@ -716,6 +817,8 @@ onMounted(async () => {
         @comments="openComments"
         @profile="openProfile"
         @delete="deleteRecipe"
+        @collection="openCollection"
+        @create-collection="createProfileCollection"
       />
 
       <RecipeDetailView
@@ -723,6 +826,7 @@ onMounted(async () => {
         :recipe="selectedRecipe"
         :viewer-id="session.user?.id || ''"
         :loading="recipeLoading"
+        :busy="busy"
         @back="loadView(lastCollectionView)"
         @profile="openProfile"
         @tag="loadDiscover"
@@ -732,13 +836,16 @@ onMounted(async () => {
         @save="actOnRecipe($event, 'save')"
         @comments="openComments"
         @delete="deleteRecipe"
+        @vote-poll="votePoll"
+        @login="loginOpen = true"
+        @notify="flash"
       />
     </main>
 
     <nav class="fixed inset-x-0 bottom-0 z-30 grid grid-cols-3 border-t-2 border-charcoal bg-porcelain px-2 py-2 lg:hidden" aria-label="Navegación móvil">
-      <button type="button" class="mobile-nav" :class="activeView === 'feed' && 'mobile-nav--active'" @click="loadView('feed')"><PhHouse :size="22" /><span>Inicio</span></button>
-      <button type="button" class="mobile-nav" :class="activeView === 'saved' && 'mobile-nav--active'" @click="loadView('saved')"><PhBookmarkSimple :size="22" /><span>Guardadas</span></button>
-      <button type="button" class="mobile-nav" :class="activeView === 'profile' && profile?.isOwnProfile && 'mobile-nav--active'" @click="openOwnProfile"><PhUserCircle :size="22" /><span>Perfil</span></button>
+      <button type="button" class="mobile-nav" :class="activeView === 'feed' && 'mobile-nav--active'" @click="loadView('feed')"><PhHouse :size="22" /><span>{{ text('home') }}</span></button>
+      <button type="button" class="mobile-nav" :class="activeView === 'saved' && 'mobile-nav--active'" @click="loadView('saved')"><PhBookmarkSimple :size="22" /><span>{{ text('saved') }}</span></button>
+      <button type="button" class="mobile-nav" :class="activeView === 'profile' && profile?.isOwnProfile && 'mobile-nav--active'" @click="openOwnProfile"><PhUserCircle :size="22" /><span>{{ text('profileShort') }}</span></button>
     </nav>
 
     <p v-if="toast" class="fixed bottom-24 left-1/2 z-[70] -translate-x-1/2 bg-charcoal px-5 py-3 text-center text-sm font-semibold text-porcelain shadow-xl lg:bottom-8" role="status" aria-live="polite">{{ toast }}</p>
@@ -752,5 +859,7 @@ onMounted(async () => {
     <NotificationsPanel v-if="notificationsOpen" :open="notificationsOpen" :items="notifications" :loading="notificationsLoading" :unread-count="unreadNotifications" @close="notificationsOpen = false" @read-all="readAllNotifications" @open-item="openNotification" />
     <EditHistoryPanel v-if="editHistoryOpen" :open="editHistoryOpen" :recipe="selectedRecipe" :edits="editHistory" :loading="editHistoryLoading" @close="editHistoryOpen = false" />
     <LiveStudio v-if="liveStudioOpen" @close="liveStudioOpen = false" @started="liveStarted" @ended="liveEnded" @login="liveStudioOpen = false; loginOpen = true" />
+    <AccessibilityPanel v-if="accessibilityOpen" :preferences="preferences" @close="accessibilityOpen = false" @update="updatePreferences" />
+    <CollectionPanel v-if="collectionOpen" :collection="selectedCollection" :recipes="collectionRecipes" :loading="collectionLoading" :can-delete="Boolean(profile?.isOwnProfile && (selectedCollection?.owner?.id === profile?.id || !selectedCollection?.owner))" @close="collectionOpen = false" @open="collectionOpen = false; openRecipe($event)" @delete="deleteCollection" />
   </div>
 </template>
