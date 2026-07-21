@@ -1,0 +1,91 @@
+RECETITAS.APP
+
+One-line pitch
+
+A Spanish-first social network where recipes become creator posts, guided cooking experiences, and live conversations.
+
+Code repository
+
+https://github.com/rahateuntirohil983/recetitas-app
+
+Live application
+
+https://recetitas-app.stherling53.chatgpt.site/app/
+
+
+## Inspiration
+
+Recetitas started in conversations between us, Martina and Valentino. We are a couple, we love food, and we kept noticing the same problem: talented Latin American cooks publish useful work online, but general social platforms are not built around recipes. A new cook can post something great and still struggle to find the people who would make it, save it, or follow the next dish.
+
+We liked the way short-form video can introduce an unknown creator to a large audience. We did not want to copy a generic video feed and add food photos to it. Recipes need structure. People need ingredients, timing, portions, instructions, and a result they can return to while cooking.
+
+Recetitas brings those two behaviors together. It gives a recipe the reach and personality of a social post while keeping it useful in the kitchen. We started with Spanish-speaking cooks and Latin American food because that is the community closest to us, but the product already supports recipes and interfaces in several languages.
+
+
+## What it does
+
+Recetitas is a working social recipe platform for desktop and mobile. People register with their own username and password, publish recipes, follow cooks, leave comments, attach photos, like posts, save recipes, and organize them into public collections. Profiles show the person behind each dish instead of treating recipes as anonymous search results.
+
+A recipe can contain a cover photo and a video of up to 35 seconds. Authors add ingredients, steps, portions, difficulty, hashtags, language, a poll, and an optional cooking timer. When someone wants to cook, the same post becomes a practical tool: Recetitas generates a shopping checklist and opens a full-screen step-by-step mode that remembers progress on the device.
+
+Discovery is not limited to a popularity ranking. Users can enter the ingredients they have at home, open the recipe of the day, spin a recipe roulette, search hashtags, filter by language, or browse active live streams. The platform also includes achievements and accessibility controls for text size, contrast, reduced motion, and color vision.
+
+Cooks can go live from a phone or computer through WebRTC. The studio handles camera switching, microphone and torch controls, real-time comments, pig stickers, moderators, message deletion, bans, and session recovery. Viewers can find active broadcasts through Discover and open the cook's profile for the full stream and chat.
+
+
+## How we built it
+
+The public landing and signed-in application use Vue 3, Vite, and Tailwind CSS. A Cloudflare Worker serves the sites and exposes the same-origin API. Cloudflare D1 stores accounts, hashed sessions, recipes, tags, comments, likes, follows, notifications, polls, collections, achievements, and live moderation state.
+
+Recipe photos and videos are uploaded through an authenticated API route. The Worker validates the request and forwards the bytes to a media service on our VPS, so its upload secret never reaches the browser. Videos are checked and converted to MP4 H.264. Live broadcasts use MediaMTX: creators publish through WHIP and viewers play the stream through WHEP.
+
+Authentication belongs to Recetitas. Passwords use salted PBKDF2 hashes. Session tokens are opaque, stored as hashes in D1, and delivered through HttpOnly SameSite cookies. Recipe edits, deletions, comment actions, follows, and moderation routes all enforce ownership or role checks in the API.
+
+We built the interface mobile-first, then checked the same flows on desktop. Secondary panels are loaded only when needed, feed videos avoid unnecessary metadata requests, and the Worker prevents outdated JavaScript chunk URLs from falling back to HTML.
+
+
+## How we used Codex and GPT-5.6
+
+Our process was iterative. Martina proposed features, reviewed the experience, and tested the deployed application on her phone. Valentino led the full-stack implementation and infrastructure. We shared mobile screenshots, console errors, and exact behavior reports with Codex.
+
+Codex inspected the existing workspace, found the relevant Vue components and Worker routes, wrote focused changes, added database migrations, ran the builds and API tests, committed revisions, and helped deploy them. GPT-5.6 was most useful when a bug crossed several systems. It helped us reason about authentication, media validation, responsive layouts, accessibility, and the WebRTC state machine.
+
+Some examples came directly from testing. A stale deployment returned HTML when the browser requested an old JavaScript module, so we changed asset fallback and cache behavior. A phone exposed four physical camera devices, so we grouped them into Front and Back choices and prioritized the rear track that supported the torch. A broadcaster leaving the browser could create a ghost live session, so we connected publication readiness, heartbeats, and cleanup to the server-side live record.
+
+We did not treat Codex as a button that generated the whole project. We used it as an engineering partner inside a tight loop: observe, explain, patch, test, deploy, and test again.
+
+
+## Challenges we ran into
+
+The first challenge was product design. A recipe needs more structure than a normal social post, but too many fields make publishing feel like paperwork. We separated the experience into two moments: a visual post for discovery and a guided view for someone who is ready to cook.
+
+Mobile media was the hardest engineering work. Browser camera labels differ by phone, torch support belongs to a specific video track, permissions can fail independently, and switching a camera without releasing the old track can break the next request. Live video added another timing problem: a stream should not appear in Discover until the WHIP publisher is actually ready, and it must disappear when the publisher is gone.
+
+Deployment exposed a different class of bug. After a release, a cached page could request an old dynamically imported chunk. Returning the Vue fallback page for that missing file produced a strict MIME-type error. We fixed it by serving application HTML without cache, returning a real 404 for missing assets, and allowing one cache-busting recovery reload.
+
+We also spent time on small mobile failures that matter while cooking: long unbroken text, controls wider than the viewport, a profile photo clipped by its frame, and a chat area too short to use in streamer mode. Screenshots from a real device drove those fixes.
+
+
+## Accomplishments that we're proud of
+
+Recetitas is deployed and the main flows work with user-created data. The feed does not rely on canned recipe posts. A new account can publish a recipe with media, receive social activity, build a profile, save dishes, cook through the instructions, or start a moderated live broadcast.
+
+We are also proud of the product's identity. The chef pig, muted pink and olive palette, hand-cut shapes, and 64 generated pig avatars make Recetitas recognizable without leaning on the visual language of a generic startup dashboard.
+
+These flows connect. A recipe is discoverable through ingredients and hashtags, belongs to a public creator profile, can be saved to a collection, becomes a shopping list and cooking guide, and can lead into a live conversation with the cook. Those are not separate demos. They share accounts, permissions, media, and durable data.
+
+
+## What we learned
+
+Food software has to respect two states of mind. Browsing should be quick and visual. Cooking should be calm, readable, and resistant to accidental taps. Reusing one layout for both would have made each experience worse.
+
+We learned to trust device evidence over assumptions. Desktop emulation did not reveal duplicate phone cameras, torch capabilities, browser chrome, or the usable height left after the mobile keyboard opened. The useful fixes started with a screenshot or a console message from the device where the failure happened.
+
+We also learned how much discipline an AI-assisted workflow needs. The best results came from narrow reports, repository context, tests, and another real-world check after deployment. Broad prompts produced ideas. Concrete evidence produced working patches.
+
+
+## What's next for Recetitas
+
+The next release will focus on creator discovery. We want to rank recommendations from saved recipes, followed cooks, available ingredients, language, and cooking behavior without reducing the feed to follower counts. Creator analytics will show which recipes are cooked and saved, not only viewed.
+
+We also plan to add stronger reporting tools, live replay, collaborative family collections, and better ingredient normalization across regional Spanish. Portuguese and English are already supported at the interface and recipe-filter level; the next step is to recruit cooks from more countries and test the cultural details with them rather than assuming one taxonomy fits every kitchen.
